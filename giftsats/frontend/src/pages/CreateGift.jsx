@@ -300,7 +300,7 @@ export default function CreateGift() {
             placeholder="ํSender Name"
             value={senderName}
             onChange={e => setSenderName(e.target.value)}
-            style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)
+           style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
             </div>
 
