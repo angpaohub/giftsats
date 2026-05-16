@@ -220,10 +220,10 @@ export default function Wallet() {
                 color: '#F7931A', fontFamily: 'var(--font-mono)', fontSize: 12,
                 cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
               }}>
-                📷 สแกน QR
+                📷 QR Scan
               </button>
               <textarea
-                placeholder="หรือ paste Cashu token ที่นี่... cashuA..."
+                placeholder="or paste Cashu token here... cashuA..."
                 value={cashuToken}
                 onChange={e => setCashuToken(e.target.value)}
                 rows={2}
