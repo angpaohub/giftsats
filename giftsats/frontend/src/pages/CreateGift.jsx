@@ -99,6 +99,16 @@ async function drawQRWithLogo(canvas, tokenValue, logoSrc) {
   });
 }
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" && window.innerWidth < 640);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
+
 export default function CreateGift() {
   const [selectedDesign, setSelectedDesign] = useState(0);
   const [amountSats, setAmountSats] = useState(21000);
@@ -115,6 +125,7 @@ export default function CreateGift() {
   const timerRef = useRef(null);
   const pollRef = useRef(null);
 
+  const isMobile = useIsMobile();
   const design = designs[selectedDesign];
   const isReady = status === 'ready';
   const isPaying = status === 'pay';
@@ -227,10 +238,10 @@ export default function CreateGift() {
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 24 : 40, alignItems: 'start' }}>
 
         {/* LEFT — switches between: controls | invoice | done */}
-        <div>
+        <div style={{ order: isMobile ? 2 : 1 }}>
 
           {/* PREVIEW STATE — controls */}
           {status === 'preview' && (<>
@@ -317,7 +328,7 @@ export default function CreateGift() {
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(invoice.paymentRequest)}`}
                   alt="Lightning Invoice QR"
-                  style={{ display: 'block', width: 240, height: 240 }}
+                  style={{ display: 'block', width: isMobile ? 200 : 240, height: isMobile ? 200 : 240 }}
                 />
               </div>
               <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '12px 14px', marginBottom: 14, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', wordBreak: 'break-all', lineHeight: 1.6 }}>
@@ -374,10 +385,10 @@ export default function CreateGift() {
         </div>
 
         {/* RIGHT — Card preview, always visible */}
-        <div>
+        <div style={{ order: isMobile ? 1 : 2 }}>
           <span style={{ ...labelStyle, marginBottom: 16 }}>PREVIEW</span>
           <div ref={cardRef} style={{
-            width: '100%', maxWidth: 340, margin: '0 auto',
+            width: '100%', maxWidth: isMobile ? '100%' : 340, margin: '0 auto',
             borderRadius: 20, overflow: 'hidden',
             border: `1px solid ${design.borderColor}55`,
             display: 'flex', flexDirection: 'column',
