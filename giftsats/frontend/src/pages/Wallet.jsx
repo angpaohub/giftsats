@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
-const API = import.meta.env.VITE_API_URL || '';
-const labelStyle = { fontFamily: 'var(--font-mono)', fontSize: 11, color: '#666', letterSpacing: 2, display: 'block', marginBottom: 12 };
+const BACKEND = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+const labelStyle = {
+  fontFamily: 'var(--font-mono)', fontSize: 11, color: '#555',
+  letterSpacing: 2, display: 'block', marginBottom: 10,
+};
 
 export default function Wallet() {
   const [tab, setTab] = useState('redeem');
@@ -9,29 +13,107 @@ export default function Wallet() {
   const [lightningAddress, setLightningAddress] = useState('');
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Send tab
   const [lnAddress, setLnAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
   const [sendStatus, setSendStatus] = useState(null);
   const [sendLoading, setSendLoading] = useState(false);
+
+  // Camera scanner
+  const [scanning, setScanning] = useState(false);
+  const [camError, setCamError] = useState(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const rafRef = useRef(null);
+  const jsQRRef = useRef(null);
+
+  // Load jsQR lazily
+  async function loadJsQR() {
+    if (jsQRRef.current) return jsQRRef.current;
+    const mod = await import('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');
+    jsQRRef.current = mod.default || window.jsQR;
+    return jsQRRef.current;
+  }
+
+  const stopCamera = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setScanning(false);
+  }, []);
+
+  async function startCamera() {
+    setCamError(null);
+    setScanning(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        scanFrame();
+      }
+    } catch (e) {
+      setCamError('ไม่สามารถเปิดกล้องได้ กรุณาอนุญาต permission ก่อนครับ');
+      setScanning(false);
+    }
+  }
+
+  async function scanFrame() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      rafRef.current = requestAnimationFrame(scanFrame);
+      return;
+    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    try {
+      const jsQR = await loadJsQR();
+      if (jsQR) {
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code?.data) {
+          const val = code.data;
+          if (val.startsWith('cashu') || val.startsWith('CASHU')) {
+            setCashuToken(val);
+            stopCamera();
+            return;
+          }
+        }
+      }
+    } catch {}
+
+    rafRef.current = requestAnimationFrame(scanFrame);
+  }
+
+  useEffect(() => () => stopCamera(), [stopCamera]);
 
   async function handleRedeem() {
     if (!cashuToken) return;
     setLoading(true);
     setStatus(null);
     try {
-      // Extract gift card ID from token or let user paste ID directly
-      const res = await fetch(`${API}/api/redeem`, {
+      const res = await fetch(`${BACKEND}/api/redeem`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cashuToken, lightningAddress: lightningAddress || undefined }),
       });
       const data = await res.json();
       if (data.success) {
-        setStatus({ ok: true, msg: lightningAddress ? `✓ Sent ${data.amountSats?.toLocaleString()} sats to ${lightningAddress}` : '✓ Redeemed successfully' });
+        setStatus({ ok: true, msg: lightningAddress ? `✓ Sent to ${lightningAddress}` : '✓ Token redeemed' });
         setCashuToken('');
-        setLightningAddress('');
       } else {
-        setStatus({ ok: false, msg: data.error || 'Redemption failed' });
+        setStatus({ ok: false, msg: data.error || 'Failed to redeem' });
       }
     } catch (e) {
       setStatus({ ok: false, msg: e.message });
@@ -45,18 +127,17 @@ export default function Wallet() {
     setSendLoading(true);
     setSendStatus(null);
     try {
-      const res = await fetch(`${API}/api/wallet/send`, {
+      const res = await fetch(`${BACKEND}/api/wallet/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lightningAddress: lnAddress, amountSats: Number(sendAmount) }),
       });
       const data = await res.json();
       if (data.success) {
-        setSendStatus({ ok: true, msg: `✓ Sent ${Number(sendAmount).toLocaleString()} sats to ${lnAddress}` });
-        setLnAddress('');
+        setSendStatus({ ok: true, msg: `✓ Sent ${sendAmount} sats to ${lnAddress}` });
         setSendAmount('');
       } else {
-        setSendStatus({ ok: false, msg: data.error || 'Send failed' });
+        setSendStatus({ ok: false, msg: data.error });
       }
     } catch (e) {
       setSendStatus({ ok: false, msg: e.message });
@@ -66,81 +147,137 @@ export default function Wallet() {
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <div style={{ marginBottom: 32 }}>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 28, letterSpacing: '-1px' }}>
+    <div style={{ maxWidth: 480 }}>
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 28, letterSpacing: '-1px', margin: 0 }}>
           Your <span style={{ color: '#F7931A' }}>Wallet</span>
         </h2>
-        <p style={{ color: '#555', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 8 }}>
-          Redeem Cashu tokens • Send to any Lightning address
+        <p style={{ color: '#555', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+          Redeem gift cards • Lightning-native
         </p>
       </div>
 
-      {/* Info banner */}
-      <div style={{ background: '#0d1020', border: '1px solid #1a1a3a', borderRadius: 12, padding: 16, marginBottom: 24 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#4a6a9a', letterSpacing: 2, marginBottom: 8 }}>HOW IT WORKS</div>
-        <p style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#5a7ab5', lineHeight: 1.6 }}>
-          Paste your Cashu token to redeem. You can send sats directly to any Lightning address (Wallet of Satoshi, Phoenix, etc.) or keep them in your Cashu wallet.
-        </p>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 24, background: '#111', borderRadius: 8, padding: 4 }}>
-        {[
-          { id: 'redeem', label: '🎁 Redeem Gift' },
-          { id: 'send', label: '⚡ Send Sats' },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            flex: 1, padding: '10px', cursor: 'pointer',
-            background: tab === t.id ? '#1a1a1a' : 'none',
-            border: tab === t.id ? '1px solid #2a2a2a' : '1px solid transparent',
-            borderRadius: 6, color: tab === t.id ? '#f0f0f0' : '#444',
-            fontFamily: 'var(--font-display)', fontWeight: tab === t.id ? 600 : 400,
-            fontSize: 13, transition: 'all 0.2s',
-          }}>{t.label}</button>
+      {/* Tab switcher */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 28, background: '#111', borderRadius: 10, padding: 4 }}>
+        {[['redeem', 'Redeem Cashu'], ['send', 'Send sats']].map(([t, label]) => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            flex: 1, padding: '10px',
+            background: tab === t ? '#1a1a1a' : 'none',
+            border: tab === t ? '1px solid #2a2a2a' : '1px solid transparent',
+            borderRadius: 8, color: tab === t ? '#f0f0f0' : '#444',
+            fontFamily: 'var(--font-display)', fontWeight: tab === t ? 700 : 400,
+            fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
+          }}>{label}</button>
         ))}
       </div>
 
+      {/* REDEEM TAB */}
       {tab === 'redeem' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <label style={labelStyle}>CASHU TOKEN</label>
-            <textarea
-              value={cashuToken}
-              onChange={e => setCashuToken(e.target.value)}
-              placeholder="cashuA..."
-              rows={4}
-              style={{
-                width: '100%', padding: '12px 14px', background: '#111',
-                border: '1px solid #2a2a2a', borderRadius: 8, color: '#f0f0f0',
-                fontSize: 12, fontFamily: 'var(--font-mono)', resize: 'vertical',
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
+          <span style={labelStyle}>CASHU TOKEN</span>
+
+          {/* Camera scanner */}
+          {scanning ? (
+            <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', aspectRatio: '1/1' }}>
+              <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} playsInline muted />
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+              {/* Scan overlay */}
+              <div style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+                pointerEvents: 'none',
+              }}>
+                <div style={{
+                  width: 200, height: 200,
+                  border: '2px solid #F7931A',
+                  borderRadius: 16,
+                  boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
+                }} />
+                <div style={{
+                  marginTop: 16, fontFamily: 'var(--font-mono)', fontSize: 12,
+                  color: '#F7931A', background: 'rgba(0,0,0,0.6)',
+                  padding: '6px 14px', borderRadius: 20,
+                }}>
+                  ส่องกล้องไปที่ QR บน gift card
+                </div>
+              </div>
+
+              {/* Close button */}
+              <button onClick={stopCamera} style={{
+                position: 'absolute', top: 12, right: 12,
+                background: 'rgba(0,0,0,0.7)', border: '1px solid #444',
+                color: '#fff', borderRadius: 8, padding: '6px 12px',
+                fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer',
+              }}>✕ ปิด</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={startCamera} style={{
+                padding: '10px 16px', borderRadius: 10,
+                background: '#1a1a1a', border: '1px solid #333',
+                color: '#F7931A', fontFamily: 'var(--font-mono)', fontSize: 12,
+                cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+              }}>
+                📷 สแกน QR
+              </button>
+              <textarea
+                placeholder="หรือ paste Cashu token ที่นี่... cashuA..."
+                value={cashuToken}
+                onChange={e => setCashuToken(e.target.value)}
+                rows={2}
+                style={{
+                  flex: 1, padding: '10px 14px', borderRadius: 10,
+                  background: '#111', border: cashuToken ? '1px solid #F7931A55' : '1px solid #333',
+                  color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 11,
+                  outline: 'none', resize: 'none', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+          )}
+
+          {camError && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#ff6b6b', padding: '8px 12px', background: '#1a0d0d', borderRadius: 8, border: '1px solid #3a1a1a' }}>
+              {camError}
+            </div>
+          )}
+
+          {cashuToken && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#39ff14', padding: '8px 12px', background: '#0d1a0d', borderRadius: 8, border: '1px solid #1a3a1a' }}>
+              ✓ Token พร้อมแล้ว
+            </div>
+          )}
 
           <div>
-            <label style={labelStyle}>SEND TO LIGHTNING ADDRESS (OPTIONAL)</label>
+            <span style={labelStyle}>LIGHTNING ADDRESS (OPTIONAL)</span>
             <input
               type="text"
+              placeholder="you@walletofsatoshi.com"
               value={lightningAddress}
               onChange={e => setLightningAddress(e.target.value)}
-              placeholder="you@walletofsatoshi.com"
-              style={{ width: '100%', padding: '12px 14px', background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, color: '#f0f0f0', fontSize: 13, fontFamily: 'var(--font-display)', boxSizing: 'border-box' }}
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: 10,
+                background: '#111', border: '1px solid #333',
+                color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13,
+                outline: 'none', boxSizing: 'border-box',
+              }}
             />
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#333', marginTop: 6 }}>
-              Leave empty to keep as Cashu token
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', marginTop: 6 }}>
+              ถ้าไม่ใส่ จะ redeem เข้า wallet ของ platform
             </div>
           </div>
 
           <button
             onClick={handleRedeem}
-            disabled={loading || !cashuToken}
+            disabled={!cashuToken || loading}
             style={{
-              padding: '14px', borderRadius: 10, cursor: cashuToken ? 'pointer' : 'not-allowed',
-              background: cashuToken ? 'linear-gradient(135deg, #F7931A, #FF6B35)' : '#1a1a1a',
-              color: cashuToken ? '#000' : '#333', border: 'none',
-              fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, transition: 'all 0.2s',
+              width: '100%', padding: '14px', borderRadius: 10,
+              background: cashuToken ? '#F7931A' : '#1a1a1a',
+              color: cashuToken ? '#000' : '#444',
+              fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
+              border: 'none', cursor: cashuToken ? 'pointer' : 'not-allowed',
+              transition: 'all 0.2s',
             }}
           >
             {loading ? 'Processing...' : 'Redeem ⚡'}
@@ -160,40 +297,51 @@ export default function Wallet() {
         </div>
       )}
 
+      {/* SEND TAB */}
       {tab === 'send' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
-            <label style={labelStyle}>LIGHTNING ADDRESS</label>
+            <span style={labelStyle}>LIGHTNING ADDRESS</span>
             <input
               type="text"
+              placeholder="friend@walletofsatoshi.com"
               value={lnAddress}
               onChange={e => setLnAddress(e.target.value)}
-              placeholder="friend@walletofsatoshi.com"
-              style={{ width: '100%', padding: '12px 14px', background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, color: '#f0f0f0', fontSize: 13, fontFamily: 'var(--font-display)', boxSizing: 'border-box' }}
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: 10,
+                background: '#111', border: '1px solid #333',
+                color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13,
+                outline: 'none', boxSizing: 'border-box',
+              }}
             />
           </div>
 
           <div>
-            <label style={labelStyle}>AMOUNT (SATS)</label>
+            <span style={labelStyle}>AMOUNT (SATS)</span>
             <input
               type="number"
+              placeholder="1000"
               value={sendAmount}
               onChange={e => setSendAmount(e.target.value)}
-              placeholder="1000"
-              min={1}
-              style={{ width: '100%', padding: '12px 14px', background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, color: '#F7931A', fontSize: 18, fontFamily: 'var(--font-mono)', boxSizing: 'border-box' }}
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: 10,
+                background: '#111', border: '1px solid #333',
+                color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13,
+                outline: 'none', boxSizing: 'border-box',
+              }}
             />
           </div>
 
           <button
             onClick={handleSend}
-            disabled={sendLoading || !lnAddress || !sendAmount}
+            disabled={!lnAddress || !sendAmount || sendLoading}
             style={{
-              padding: '14px', borderRadius: 10, border: 'none',
-              cursor: (lnAddress && sendAmount) ? 'pointer' : 'not-allowed',
-              background: (lnAddress && sendAmount) ? 'linear-gradient(135deg, #F7931A, #FF6B35)' : '#1a1a1a',
-              color: (lnAddress && sendAmount) ? '#000' : '#333',
-              fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, transition: 'all 0.2s',
+              width: '100%', padding: '14px', borderRadius: 10,
+              background: lnAddress && sendAmount ? '#F7931A' : '#1a1a1a',
+              color: lnAddress && sendAmount ? '#000' : '#444',
+              fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
+              border: 'none', cursor: lnAddress && sendAmount ? 'pointer' : 'not-allowed',
+              transition: 'all 0.2s',
             }}
           >
             {sendLoading ? 'Sending...' : 'Send ⚡'}
