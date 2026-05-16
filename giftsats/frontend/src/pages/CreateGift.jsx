@@ -114,6 +114,7 @@ export default function CreateGift() {
   const [amountSats, setAmountSats] = useState(21000);
   const [customAmount, setCustomAmount] = useState('');
   const [senderNote, setSenderNote] = useState('');
+  const [senderName, setSenderName] = useState('');
   const [status, setStatus] = useState('preview');
   const [invoice, setInvoice] = useState(null);
   const [giftCard, setGiftCard] = useState(null);
@@ -292,6 +293,15 @@ export default function CreateGift() {
                 onChange={e => setSenderNote(e.target.value)} rows={2}
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
               />
+              <div style={{ marginBottom: 24 }}>
+            <span style={labelStyle}>FROM (OPTIONAL)</span>
+            <input
+            type="text"
+            placeholder="ํSender Name"
+            value={senderName}
+            onChange={e => setSenderName(e.target.value)}
+            style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)
+              />
             </div>
 
             <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '14px 16px', marginBottom: 20, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
@@ -416,7 +426,7 @@ export default function CreateGift() {
                 {senderNote && <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: design.accentAlt, marginTop: 10, fontStyle: 'italic' }}>"{senderNote.slice(0, 50)}"</div>}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', position: 'relative' }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.accentAlt }}>by {design.designer}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.accentAlt }}>{senderName ? `from ${senderName}` : 'by GiftSats'}</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isReady ? '#39ff14' : design.accentAlt }}>{isReady ? '✓ READY TO SEND' : isPaying ? '⏳ AWAITING PAYMENT' : 'PREVIEW'}</div>
               </div>
             </div>
