@@ -1,324 +1,570 @@
-import { useState, useEffect, useRef } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import { useState, useRef, useEffect } from 'react';
+import QRCode from 'qrcode';
 
-const API = import.meta.env.VITE_API_URL || '';
-const PLATFORM_FEE_PERCENT = 0.5;
-const INVOICE_TIMEOUT_SECONDS = 600;
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 
-const defaultDesigns = [
-  { id: 'default-orange', name: 'Bitcoin Classic', designer: 'GiftSats', priceSats: 0, colors: ['#F7931A', '#FF6B35'], emoji: '₿' },
-  { id: 'default-dark', name: 'Midnight Stack', designer: 'GiftSats', priceSats: 0, colors: ['#1a1a2e', '#16213e'], emoji: '⚡' },
-  { id: 'default-green', name: 'Sovereign Green', designer: 'GiftSats', priceSats: 0, colors: ['#00b09b', '#96c93d'], emoji: '🔑' },
+const LOGO_URL = '/logo.png';
+
+const designs = [
+  {
+    id: 'classic',
+    name: 'Classic Bitcoin',
+    designer: 'GiftSats',
+    emoji: '₿',
+    bg: 'linear-gradient(160deg, #1a0a00 0%, #2d1200 40%, #1a0a00 100%)',
+    accent: '#F7931A',
+    textColor: '#fff',
+    borderColor: '#F7931A44',
+    patternColor: 'rgba(247,147,26,0.06)',
+  },
+  {
+    id: 'midnight',
+    name: 'Midnight Stack',
+    designer: 'GiftSats',
+    emoji: '⚡',
+    bg: 'linear-gradient(160deg, #0a0a1a 0%, #0d0d2b 40%, #070714 100%)',
+    accent: '#7B61FF',
+    textColor: '#fff',
+    borderColor: '#7B61FF44',
+    patternColor: 'rgba(123,97,255,0.06)',
+  },
+  {
+    id: 'emerald',
+    name: 'Emerald Vault',
+    designer: 'GiftSats',
+    emoji: '🔐',
+    bg: 'linear-gradient(160deg, #001a0d 0%, #002d18 40%, #001a0d 100%)',
+    accent: '#00C97A',
+    textColor: '#fff',
+    borderColor: '#00C97A44',
+    patternColor: 'rgba(0,201,122,0.06)',
+  },
 ];
 
-function calcFees(amountSats) {
-  const platformFee = Math.ceil(amountSats * PLATFORM_FEE_PERCENT / 100);
-  const networkFee = 2;
-  const total = amountSats + platformFee + networkFee;
-  return { platformFee, networkFee, total };
+const SAT_PRESETS = [1000, 5000, 10000, 21000, 100000];
+const EXCHANGE_RATE = 3500000; // THB per BTC approx
+const FEE_PERCENT = 0.02;
+
+const labelStyle = {
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  color: '#666',
+  letterSpacing: 2,
+  display: 'block',
+  marginBottom: 10,
+};
+
+function satsToTHB(sats) {
+  return ((sats / 100000000) * EXCHANGE_RATE).toFixed(2);
 }
 
-const labelStyle = { fontFamily: 'var(--font-mono)', fontSize: 11, color: '#666', letterSpacing: 2, display: 'block', marginBottom: 12 };
+// Draw QR with logo in center on canvas
+async function drawQRWithLogo(canvas, tokenValue, logoSrc) {
+  const size = canvas.width;
+  const ctx = canvas.getContext('2d');
+
+  // Draw QR
+  await QRCode.toCanvas(canvas, tokenValue || 'giftsats_placeholder', {
+    width: size,
+    margin: 1,
+    errorCorrectionLevel: 'H',
+    color: { dark: '#000000', light: '#ffffff' },
+  });
+
+  // Draw logo in center
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const logoSize = size * 0.22;
+      const logoX = (size - logoSize) / 2;
+      const logoY = (size - logoSize) / 2;
+
+      // White circle bg behind logo
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, logoSize / 2 + 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.restore();
+
+      // Draw logo (remove black bg by drawing with destination-out if needed)
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, logoSize / 2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, logoX, logoY, logoSize, logoSize);
+      ctx.restore();
+
+      resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = logoSrc;
+  });
+}
 
 export default function CreateGift() {
-  const [designs] = useState(defaultDesigns);
-  const [selectedDesign, setSelectedDesign] = useState(defaultDesigns[0]);
-  const [amountSats, setAmountSats] = useState(2100);
+  const [selectedDesign, setSelectedDesign] = useState(0);
+  const [amountSats, setAmountSats] = useState(21000);
+  const [customAmount, setCustomAmount] = useState('');
   const [senderNote, setSenderNote] = useState('');
-  const [step, setStep] = useState('select');
-  const [giftCard, setGiftCard] = useState(null);
+  const [status, setStatus] = useState('preview'); // preview | pay | ready
   const [invoice, setInvoice] = useState(null);
+  const [giftCard, setGiftCard] = useState(null);
+  const [countdown, setCountdown] = useState(600);
   const [polling, setPolling] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(INVOICE_TIMEOUT_SECONDS);
+
+  const cardRef = useRef(null);
+  const qrCanvasRef = useRef(null);
   const timerRef = useRef(null);
-  const fees = calcFees(amountSats);
+  const pollRef = useRef(null);
+
+  const design = designs[selectedDesign];
+  const isReady = status === 'ready';
+  const isPaying = status === 'pay';
+  const feeSats = Math.ceil(amountSats * FEE_PERCENT);
+  const totalSats = amountSats + feeSats;
+
+  // Draw QR whenever token changes
+  useEffect(() => {
+    if (!qrCanvasRef.current) return;
+    const token = isReady && giftCard?.cashuToken ? giftCard.cashuToken : 'giftsats_placeholder';
+    drawQRWithLogo(qrCanvasRef.current, token, LOGO_URL);
+  }, [isReady, giftCard]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (status !== 'pay') return;
+    setCountdown(600);
+    timerRef.current = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          clearInterval(timerRef.current);
+          setStatus('preview');
+          showToast('Invoice expired. Please try again.', 'error');
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [status]);
 
   function showToast(msg, type = 'success') {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   }
 
-  useEffect(() => {
-    if (!polling || !giftCard) return;
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`${API}/api/gift/${giftCard.id}`);
-        const data = await res.json();
-        if (data.status === 'minted') {
-          setGiftCard(data);
-          setStep('ready');
-          setPolling(false);
-          clearInterval(timerRef.current);
-          showToast('Payment received! Gift card ready 🎉');
-        }
-      } catch {}
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [polling, giftCard]);
-
-  useEffect(() => {
-    if (step !== 'pay') return;
-    setTimeLeft(INVOICE_TIMEOUT_SECONDS);
-    timerRef.current = setInterval(() => {
-      setTimeLeft(t => {
-        if (t <= 1) {
-          clearInterval(timerRef.current);
-          setStep('select');
-          setGiftCard(null);
-          setInvoice(null);
-          setPolling(false);
-          showToast('Invoice expired. Please generate a new one.', 'error');
-          return 0;
-        }
-        return t - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timerRef.current);
-  }, [step]);
-
-  async function handleCreate() {
+  async function handleGenerate() {
     try {
-      const res = await fetch(`${API}/api/gift/create`, {
+      const res = await fetch(`${BACKEND}/api/create-gift`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountSats, designId: selectedDesign?.id, senderNote }),
+        body: JSON.stringify({ amountSats, senderNote, designId: design.id }),
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setGiftCard({ id: data.giftCardId, ...data });
-      setInvoice(data.paymentRequest);
-      setStep('pay');
-      setPolling(true);
+      if (data.invoice) {
+        setInvoice(data);
+        setStatus('pay');
+        startPolling(data.paymentHash);
+      } else {
+        showToast(data.error || 'Failed to create invoice', 'error');
+      }
     } catch (e) {
-      showToast('Error: ' + e.message, 'error');
+      showToast(e.message, 'error');
     }
   }
 
-  function copyInvoice() {
-    navigator.clipboard.writeText(invoice);
-    setCopied(true);
-    showToast('Invoice copied!');
-    setTimeout(() => setCopied(false), 2000);
+  function startPolling(paymentHash) {
+    setPolling(true);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND}/api/check-payment/${paymentHash}`);
+        const data = await res.json();
+        if (data.paid) {
+          clearInterval(pollRef.current);
+          clearInterval(timerRef.current);
+          setPolling(false);
+          setGiftCard(data);
+          setStatus('ready');
+          showToast('Payment received! Your gift card is ready 🎉');
+        }
+      } catch {}
+    }, 2000);
   }
 
-  function formatTime(s) {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${sec.toString().padStart(2, '0')}`;
+  useEffect(() => () => {
+    clearInterval(pollRef.current);
+    clearInterval(timerRef.current);
+  }, []);
+
+  // Export as PNG
+  async function handleDownloadPNG() {
+    if (!cardRef.current) return;
+    const { default: html2canvas } = await import('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.esm.js');
+    const canvas = await html2canvas(cardRef.current, {
+      backgroundColor: null,
+      scale: 3,
+      useCORS: true,
+      allowTaint: true,
+    });
+    const link = document.createElement('a');
+    link.download = `giftsats-${amountSats}sats.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
   }
 
-  const design = selectedDesign;
+  // Print
+  function handlePrint() {
+    window.print();
+  }
+
+  const mins = String(Math.floor(countdown / 60)).padStart(2, '0');
+  const secs = String(countdown % 60).padStart(2, '0');
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ maxWidth: 560 }}>
+
+      {/* Toast */}
       {toast && (
         <div style={{
           position: 'fixed', top: 24, right: 24, zIndex: 999,
-          background: toast.type === 'error' ? '#2a0a0a' : '#0a2a0a',
-          border: `1px solid ${toast.type === 'error' ? '#ff4444' : '#39ff14'}`,
-          color: toast.type === 'error' ? '#ff4444' : '#39ff14',
-          padding: '12px 20px', borderRadius: 10,
-          fontFamily: 'var(--font-mono)', fontSize: 13,
+          background: toast.type === 'error' ? '#2a0d0d' : '#0d1a0d',
+          border: `1px solid ${toast.type === 'error' ? '#5a1a1a' : '#1a3a1a'}`,
+          color: toast.type === 'error' ? '#ff6b6b' : '#39ff14',
+          fontFamily: 'var(--font-mono)', fontSize: 12,
+          padding: '14px 20px', borderRadius: 10,
           boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          maxWidth: 320,
         }}>
           {toast.msg}
         </div>
       )}
 
+      {/* Header */}
+      <div style={{ marginBottom: 32 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 28, letterSpacing: '-1px', margin: 0 }}>
+          Create <span style={{ color: '#F7931A' }}>Gift Card</span>
+        </h2>
+        <p style={{ color: '#555', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+          Bitcoin gift cards powered by Cashu ⚡
+        </p>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, alignItems: 'start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-          {step === 'select' && <>
-            <section>
-              <label style={labelStyle}>SELECT DESIGN</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {designs.map(d => (
-                  <button key={d.id} onClick={() => setSelectedDesign(d)} style={{
-                    padding: '12px', borderRadius: 8, textAlign: 'left', transition: 'all 0.15s', cursor: 'pointer',
-                    background: selectedDesign?.id === d.id ? '#1a1a1a' : 'transparent',
-                    border: `1px solid ${selectedDesign?.id === d.id ? '#F7931A' : '#2a2a2a'}`,
-                    color: '#f0f0f0',
-                  }}>
-                    <div style={{ fontSize: 20, marginBottom: 4 }}>{d.emoji}</div>
-                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 13 }}>{d.name}</div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', marginTop: 2 }}>free</div>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <label style={labelStyle}>AMOUNT (SATS)</label>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-                {[1000, 2100, 5000, 10000, 21000].map(amt => (
-                  <button key={amt} onClick={() => setAmountSats(amt)} style={{
-                    padding: '8px 14px', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    background: amountSats === amt ? '#F7931A' : '#1a1a1a',
-                    color: amountSats === amt ? '#000' : '#f0f0f0',
-                    border: '1px solid #2a2a2a', transition: 'all 0.15s',
-                  }}>{amt.toLocaleString()}</button>
-                ))}
-              </div>
-              <input type="number" value={amountSats} onChange={e => setAmountSats(Number(e.target.value))} min={100}
-                style={{ width: '100%', padding: '12px 14px', background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, color: '#F7931A', fontSize: 18, fontFamily: 'var(--font-mono)' }} />
-            </section>
-
-            <section>
-              <label style={labelStyle}>NOTE (OPTIONAL)</label>
-              <input type="text" value={senderNote} onChange={e => setSenderNote(e.target.value)}
-                placeholder="Happy birthday! ⚡" maxLength={100}
-                style={{ width: '100%', padding: '12px 14px', background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, color: '#f0f0f0', fontSize: 14, fontFamily: 'var(--font-display)' }} />
-            </section>
-
-            <section style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: 10, padding: 16 }}>
-              <label style={labelStyle}>FEE BREAKDOWN</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {[
-                  { label: 'Gift amount', value: amountSats },
-                  { label: `Platform fee (${PLATFORM_FEE_PERCENT}%)`, value: fees.platformFee },
-                  { label: 'Network fee (est.)', value: fees.networkFee },
-                ].map(row => (
-                  <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#555' }}>{row.label}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#888' }}>{row.value.toLocaleString()} sats</span>
-                  </div>
-                ))}
-                <div style={{ borderTop: '1px solid #2a2a2a', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: '#f0f0f0', fontWeight: 700 }}>Total</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: '#F7931A', fontWeight: 700 }}>{fees.total.toLocaleString()} sats</span>
-                </div>
-              </div>
-            </section>
-
-            <button onClick={handleCreate} style={{
-              padding: '16px', borderRadius: 10, fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 16,
-              background: 'linear-gradient(135deg, #F7931A, #FF6B35)', color: '#000',
-              animation: 'pulse-glow 3s ease-in-out infinite', cursor: 'pointer', border: 'none',
-            }}>Generate Gift Card ⚡</button>
-          </>}
-
-          {step === 'pay' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label style={labelStyle}>PAY LIGHTNING INVOICE</label>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: timeLeft < 60 ? '#ff4444' : '#F7931A', fontWeight: 700 }}>
-                  ⏱ {formatTime(timeLeft)}
-                </div>
-              </div>
-              <div style={{ background: '#fff', padding: 16, borderRadius: 12, display: 'inline-flex', alignSelf: 'flex-start' }}>
-                <QRCodeSVG value={invoice || ''} size={200} />
-              </div>
-              <div style={{ background: '#111', border: '1px solid #2a2a2a', borderRadius: 8, padding: '12px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#555', wordBreak: 'break-all', maxHeight: 80, overflow: 'hidden' }}>
-                {invoice}
-              </div>
-              <div style={{ background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: 8, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444' }}>You pay</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#F7931A', fontWeight: 700 }}>{fees.total.toLocaleString()} sats</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444' }}>Recipient gets</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#39ff14', fontWeight: 700 }}>{amountSats.toLocaleString()} sats</span>
-                </div>
-              </div>
-              <button onClick={copyInvoice} style={{ padding: '12px', background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 8, color: copied ? '#39ff14' : '#f0f0f0', fontFamily: 'var(--font-display)', fontSize: 14, cursor: 'pointer' }}>
-                {copied ? '✓ Copied!' : 'Copy Invoice'}
-              </button>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#555', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#F7931A', animation: 'pulse-glow 1s ease-in-out infinite' }} />
-                Waiting for payment...
-              </div>
-              <button onClick={() => { setStep('select'); setGiftCard(null); setInvoice(null); setPolling(false); clearInterval(timerRef.current); }}
-                style={{ padding: '10px', background: 'none', border: '1px solid #1a1a1a', borderRadius: 8, color: '#444', fontFamily: 'var(--font-display)', fontSize: 13, cursor: 'pointer' }}>
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {step === 'ready' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ color: '#39ff14', fontFamily: 'var(--font-mono)', fontSize: 13 }}>✓ Payment received! Gift card is ready.</div>
-              <div style={{ background: '#0d1a0d', border: '1px solid #1a3a1a', borderRadius: 10, padding: 16 }}>
-                <label style={{ ...labelStyle, color: '#39ff14' }}>CASHU TOKEN</label>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#4a8a4a', wordBreak: 'break-all', maxHeight: 80, overflow: 'hidden' }}>
-                  {giftCard?.cashuToken || ''}
-                </div>
-              </div>
-              <button onClick={() => { navigator.clipboard.writeText(giftCard?.cashuToken || ''); showToast('Token copied!'); }}
-                style={{ padding: '14px', background: '#0d1a0d', border: '1px solid #39ff14', borderRadius: 8, color: '#39ff14', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-                Copy Cashu Token
-              </button>
-              <button onClick={() => { setStep('select'); setGiftCard(null); setInvoice(null); }}
-                style={{ padding: '14px', background: 'none', border: '1px solid #2a2a2a', borderRadius: 8, color: '#555', fontFamily: 'var(--font-display)', fontSize: 14, cursor: 'pointer' }}>
-                Create Another
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Preview */}
-        <div style={{ position: 'sticky', top: 100 }}>
-          <label style={labelStyle}>PREVIEW</label>
-          <GiftCardPreview design={design} amountSats={amountSats} senderNote={senderNote} status={step} giftCard={giftCard} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GiftCardPreview({ design, amountSats, senderNote, status, giftCard }) {
-  if (!design) return null;
-  const [c1, c2] = design.colors || ['#F7931A', '#FF6B35'];
-  const isReady = status === 'ready';
-
-  return (
-    <div>
-      <div style={{
-        width: '100%', aspectRatio: '1.6', borderRadius: 16,
-        background: `linear-gradient(135deg, ${c1}, ${c2})`,
-        padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-        animation: 'float 4s ease-in-out infinite',
-        boxShadow: `0 20px 60px ${c1}44`, position: 'relative', overflow: 'hidden',
-      }}>
-        <div style={{ position: 'absolute', right: -40, top: -40, width: 180, height: 180, borderRadius: '50%', background: 'rgba(255,255,255,0.07)' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.6)', letterSpacing: 2 }}>GIFT SATS</div>
-            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, color: '#fff', marginTop: 4 }}>{design.name}</div>
-          </div>
-          <div style={{ fontSize: 32 }}>{design.emoji}</div>
-        </div>
+        {/* LEFT — Controls */}
         <div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 32, fontWeight: 700, color: '#fff' }}>
-            {amountSats.toLocaleString()}<span style={{ fontSize: 14, marginLeft: 6, opacity: 0.7 }}>sats</span>
+          {/* Design picker */}
+          <div style={{ marginBottom: 24 }}>
+            <span style={labelStyle}>CHOOSE DESIGN</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {designs.map((d, i) => (
+                <button key={d.id} onClick={() => setSelectedDesign(i)} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 14px', borderRadius: 10,
+                  background: selectedDesign === i ? '#1a1a1a' : 'transparent',
+                  border: selectedDesign === i ? `1px solid ${d.accent}55` : '1px solid #222',
+                  cursor: 'pointer', transition: 'all 0.15s', textAlign: 'left',
+                }}>
+                  <span style={{ fontSize: 20 }}>{d.emoji}</span>
+                  <div>
+                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: selectedDesign === i ? d.accent : '#888' }}>{d.name}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444' }}>by {d.designer}</div>
+                  </div>
+                  {selectedDesign === i && <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: d.accent }} />}
+                </button>
+              ))}
+            </div>
           </div>
-          {senderNote && <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 6, fontStyle: 'italic' }}>"{senderNote}"</div>}
+
+          {/* Amount */}
+          <div style={{ marginBottom: 24 }}>
+            <span style={labelStyle}>AMOUNT</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {SAT_PRESETS.map(p => (
+                <button key={p} onClick={() => { setAmountSats(p); setCustomAmount(''); }} style={{
+                  padding: '6px 12px', borderRadius: 8, fontSize: 12,
+                  fontFamily: 'var(--font-mono)',
+                  background: amountSats === p && !customAmount ? design.accent : 'transparent',
+                  color: amountSats === p && !customAmount ? '#000' : '#666',
+                  border: amountSats === p && !customAmount ? `1px solid ${design.accent}` : '1px solid #333',
+                  cursor: 'pointer', transition: 'all 0.15s', fontWeight: 600,
+                }}>
+                  {p.toLocaleString()}
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              placeholder="Custom amount (sats)"
+              value={customAmount}
+              onChange={e => { setCustomAmount(e.target.value); setAmountSats(Number(e.target.value) || 0); }}
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: 8,
+                background: '#111', border: '1px solid #333',
+                color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13,
+                outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {/* Note */}
+          <div style={{ marginBottom: 24 }}>
+            <span style={labelStyle}>MESSAGE (OPTIONAL)</span>
+            <textarea
+              placeholder="Happy Birthday! 🎂"
+              value={senderNote}
+              onChange={e => setSenderNote(e.target.value)}
+              rows={2}
+              style={{
+                width: '100%', padding: '10px 14px', borderRadius: 8,
+                background: '#111', border: '1px solid #333',
+                color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13,
+                outline: 'none', resize: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {/* Fee breakdown */}
+          <div style={{
+            background: '#111', border: '1px solid #222', borderRadius: 10,
+            padding: '14px 16px', marginBottom: 20, fontFamily: 'var(--font-mono)', fontSize: 12,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+              <span>Gift amount</span><span style={{ color: '#aaa' }}>{amountSats.toLocaleString()} sats</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+              <span>Service fee (2%)</span><span style={{ color: '#aaa' }}>{feeSats.toLocaleString()} sats</span>
+            </div>
+            <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#888' }}>Total to pay</span>
+              <span style={{ color: design.accent, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
+            </div>
+            <div style={{ marginTop: 6, color: '#444', fontSize: 10 }}>≈ ฿{satsToTHB(totalSats)} THB</div>
+          </div>
+
+          {/* CTA */}
+          {status === 'preview' && (
+            <button onClick={handleGenerate} style={{
+              width: '100%', padding: '14px', borderRadius: 10,
+              background: design.accent, color: '#000',
+              fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
+              border: 'none', cursor: 'pointer', transition: 'opacity 0.2s',
+            }}
+              onMouseEnter={e => e.target.style.opacity = '0.85'}
+              onMouseLeave={e => e.target.style.opacity = '1'}
+            >
+              Generate Invoice ⚡
+            </button>
+          )}
+
+          {/* Invoice QR + countdown */}
+          {status === 'pay' && invoice && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: design.accent, marginBottom: 12 }}>
+                ⏱ {mins}:{secs} remaining
+              </div>
+              <div style={{ background: '#fff', padding: 12, borderRadius: 10, display: 'inline-block', marginBottom: 12 }}>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(invoice.invoice)}`}
+                  alt="Lightning Invoice QR"
+                  style={{ display: 'block', width: 180, height: 180 }}
+                />
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', wordBreak: 'break-all', marginBottom: 12 }}>
+                {invoice.invoice?.slice(0, 40)}...
+              </div>
+              <button onClick={() => { navigator.clipboard.writeText(invoice.invoice); showToast('Copied!'); }} style={{
+                padding: '8px 20px', borderRadius: 8, background: '#1a1a1a', border: '1px solid #333',
+                color: '#aaa', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer',
+              }}>
+                Copy Invoice
+              </button>
+            </div>
+          )}
+
+          {/* Export buttons */}
+          {status === 'ready' && (
+            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+              <button onClick={handleDownloadPNG} style={{
+                flex: 1, padding: '12px', borderRadius: 10,
+                background: design.accent, color: '#000',
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13,
+                border: 'none', cursor: 'pointer',
+              }}>
+                ↓ Download PNG
+              </button>
+              <button onClick={handlePrint} style={{
+                flex: 1, padding: '12px', borderRadius: 10,
+                background: '#1a1a1a', color: '#aaa',
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13,
+                border: '1px solid #333', cursor: 'pointer',
+              }}>
+                🖨 Print
+              </button>
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>by {design.designer}</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{isReady ? '✓ READY' : 'PREVIEW'}</div>
+
+        {/* RIGHT — Card Preview 1:2 portrait */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ ...labelStyle, marginBottom: 14 }}>CARD PREVIEW</span>
+
+          <div
+            ref={cardRef}
+            style={{
+              width: 220,
+              height: 440,
+              borderRadius: 18,
+              overflow: 'hidden',
+              border: `1px solid ${design.borderColor}`,
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: `0 0 40px ${design.accent}15`,
+              position: 'relative',
+            }}
+          >
+            {/* TOP HALF — Design */}
+            <div style={{
+              flex: 1,
+              background: design.bg,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              padding: '20px 18px 16px',
+              position: 'relative',
+              overflow: 'hidden',
+            }}>
+              {/* Subtle pattern */}
+              <div style={{
+                position: 'absolute', inset: 0,
+                backgroundImage: `radial-gradient(circle, ${design.patternColor} 1px, transparent 1px)`,
+                backgroundSize: '18px 18px',
+                pointerEvents: 'none',
+              }} />
+
+              {/* Top row */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'relative' }}>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: design.accent, letterSpacing: 2, marginBottom: 3 }}>GIFTSATS</div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 12, color: '#fff' }}>{design.name}</div>
+                </div>
+                <div style={{ fontSize: 22 }}>{design.emoji}</div>
+              </div>
+
+              {/* Center — amount */}
+              <div style={{ position: 'relative', textAlign: 'center' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 30, fontWeight: 800, color: '#fff', lineHeight: 1 }}>
+                  {amountSats.toLocaleString()}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: design.accent, marginTop: 4, letterSpacing: 1 }}>SATS</div>
+                {senderNote ? (
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 10, color: 'rgba(255,255,255,0.6)', marginTop: 8, fontStyle: 'italic' }}>
+                    "{senderNote.slice(0, 40)}"
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Bottom row */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.3)' }}>by {design.designer}</div>
+                <div style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 8,
+                  color: isReady ? '#39ff14' : 'rgba(255,255,255,0.3)',
+                }}>
+                  {isReady ? '✓ READY' : 'PREVIEW'}
+                </div>
+              </div>
+            </div>
+
+            {/* BOTTOM HALF — QR + Redeem info (lighter for print/fold) */}
+            <div style={{
+              height: 220,
+              background: '#f8f5f0',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px 14px',
+              gap: 10,
+              position: 'relative',
+            }}>
+              {/* Dashed fold line hint */}
+              <div style={{
+                position: 'absolute', top: 0, left: 16, right: 16,
+                borderTop: '1px dashed #ddd',
+              }} />
+
+              {/* QR with blur overlay */}
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <canvas
+                  ref={qrCanvasRef}
+                  width={120}
+                  height={120}
+                  style={{
+                    borderRadius: 8,
+                    filter: isReady ? 'none' : 'blur(6px)',
+                    transition: 'filter 0.6s ease',
+                    display: 'block',
+                  }}
+                />
+                {!isReady && (
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center',
+                    gap: 4,
+                  }}>
+                    <div style={{ fontSize: 20 }}>🔒</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#999', textAlign: 'center' }}>
+                      {isPaying ? 'Waiting payment...' : 'Pay to reveal'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Redeem instructions */}
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#888', lineHeight: 1.6 }}>
+                  Scan QR or visit
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#F7931A', fontWeight: 700 }}>
+                  giftsats.com
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#aaa', lineHeight: 1.6, marginTop: 2 }}>
+                  Enter Lightning address<br />to receive your sats ⚡
+                </div>
+              </div>
+
+              {/* Powered by */}
+              <div style={{
+                fontFamily: 'var(--font-mono)', fontSize: 7,
+                color: '#ccc', letterSpacing: 1,
+                borderTop: '1px solid #e8e4de',
+                paddingTop: 6, width: '100%', textAlign: 'center',
+              }}>
+                POWERED BY BITCOIN ⚡ CASHU
+              </div>
+            </div>
+          </div>
+
+          {/* Print hint */}
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', textAlign: 'center' }}>
+            พับครึ่งได้ • ปริ้น • ส่ง social
+          </div>
         </div>
       </div>
 
-      {(status === 'pay' || status === 'ready') && (
-        <div style={{ marginTop: 16, background: '#111', border: '1px solid #2a2a2a', borderRadius: 12, padding: 16, textAlign: 'center' }}>
-          <label style={labelStyle}>CASHU REDEEM QR</label>
-          <div style={{ marginTop: 12, position: 'relative', display: 'inline-block' }}>
-            <div style={{ filter: isReady ? 'none' : 'blur(8px)', transition: 'filter 0.5s ease', background: '#fff', padding: 12, borderRadius: 8 }}>
-              <QRCodeSVG value={isReady && giftCard?.cashuToken ? giftCard.cashuToken : 'cashuA_placeholder'} size={140} />
-            </div>
-            {!isReady && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <div style={{ fontSize: 24 }}>🔒</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555' }}>Pay to reveal</div>
-              </div>
-            )}
-          </div>
-          {isReady && <div style={{ marginTop: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#39ff14' }}>Scan with Minibits or any Cashu wallet</div>}
-        </div>
-      )}
+      {/* Print styles */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          [data-printable], [data-printable] * { visibility: visible; }
+          body { margin: 0; }
+        }
+      `}</style>
     </div>
   );
 }
