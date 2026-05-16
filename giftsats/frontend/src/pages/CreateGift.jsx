@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import QRCode from 'qrcode';
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const LOGO_URL = '/logo.png';
 
 const designs = [
@@ -229,109 +229,151 @@ export default function CreateGift() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40, alignItems: 'start' }}>
 
-        {/* LEFT */}
+        {/* LEFT — switches between: controls | invoice | done */}
         <div>
-          <div style={{ marginBottom: 24 }}>
-            <span style={labelStyle}>CHOOSE DESIGN</span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {designs.map((d, i) => (
-                <button key={d.id} onClick={() => setSelectedDesign(i)} style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '10px 14px', borderRadius: 10,
-                  background: selectedDesign === i ? '#1a1a1a' : 'transparent',
-                  border: selectedDesign === i ? `1px solid ${d.borderColor}66` : '1px solid #222',
-                  cursor: 'pointer', transition: 'all 0.15s', textAlign: 'left',
-                }}>
-                  <span style={{ fontSize: 20 }}>{d.emoji}</span>
-                  <div>
-                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: selectedDesign === i ? d.borderColor : '#888' }}>{d.name}</div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444' }}>by {d.designer}</div>
-                  </div>
-                  {selectedDesign === i && <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: d.borderColor }} />}
-                </button>
-              ))}
-            </div>
-          </div>
 
-          <div style={{ marginBottom: 24 }}>
-            <span style={labelStyle}>AMOUNT</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-              {SAT_PRESETS.map(p => (
-                <button key={p} onClick={() => { setAmountSats(p); setCustomAmount(''); }} style={{
-                  padding: '6px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'var(--font-mono)',
-                  background: amountSats === p && !customAmount ? design.borderColor : 'transparent',
-                  color: amountSats === p && !customAmount ? '#000' : '#666',
-                  border: amountSats === p && !customAmount ? `1px solid ${design.borderColor}` : '1px solid #333',
-                  cursor: 'pointer', transition: 'all 0.15s', fontWeight: 600,
-                }}>{p.toLocaleString()}</button>
-              ))}
+          {/* PREVIEW STATE — controls */}
+          {status === 'preview' && (<>
+            <div style={{ marginBottom: 24 }}>
+              <span style={labelStyle}>CHOOSE DESIGN</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {designs.map((d, i) => (
+                  <button key={d.id} onClick={() => setSelectedDesign(i)} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 14px', borderRadius: 10,
+                    background: selectedDesign === i ? '#1a1a1a' : 'transparent',
+                    border: selectedDesign === i ? `1px solid ${d.borderColor}66` : '1px solid #222',
+                    cursor: 'pointer', transition: 'all 0.15s', textAlign: 'left',
+                  }}>
+                    <span style={{ fontSize: 20 }}>{d.emoji}</span>
+                    <div>
+                      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: selectedDesign === i ? d.borderColor : '#888' }}>{d.name}</div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444' }}>by {d.designer}</div>
+                    </div>
+                    {selectedDesign === i && <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: d.borderColor }} />}
+                  </button>
+                ))}
+              </div>
             </div>
-            <input type="number" placeholder="Custom amount (sats)" value={customAmount}
-              onChange={e => { setCustomAmount(e.target.value); setAmountSats(Number(e.target.value) || 0); }}
-              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
-            />
-          </div>
 
-          <div style={{ marginBottom: 24 }}>
-            <span style={labelStyle}>MESSAGE (OPTIONAL)</span>
-            <textarea placeholder="Happy Birthday! 🎂" value={senderNote}
-              onChange={e => setSenderNote(e.target.value)} rows={2}
-              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
-            />
-          </div>
+            <div style={{ marginBottom: 24 }}>
+              <span style={labelStyle}>AMOUNT</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {SAT_PRESETS.map(p => (
+                  <button key={p} onClick={() => { setAmountSats(p); setCustomAmount(''); }} style={{
+                    padding: '6px 12px', borderRadius: 8, fontSize: 12, fontFamily: 'var(--font-mono)',
+                    background: amountSats === p && !customAmount ? design.borderColor : 'transparent',
+                    color: amountSats === p && !customAmount ? '#000' : '#666',
+                    border: amountSats === p && !customAmount ? `1px solid ${design.borderColor}` : '1px solid #333',
+                    cursor: 'pointer', transition: 'all 0.15s', fontWeight: 600,
+                  }}>{p.toLocaleString()}</button>
+                ))}
+              </div>
+              <input type="number" placeholder="Custom amount (sats)" value={customAmount}
+                onChange={e => { setCustomAmount(e.target.value); setAmountSats(Number(e.target.value) || 0); }}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
 
-          <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '14px 16px', marginBottom: 20, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
-              <span>Gift amount</span><span style={{ color: '#aaa' }}>{amountSats.toLocaleString()} sats</span>
+            <div style={{ marginBottom: 24 }}>
+              <span style={labelStyle}>MESSAGE (OPTIONAL)</span>
+              <textarea placeholder="Happy Birthday! 🎂" value={senderNote}
+                onChange={e => setSenderNote(e.target.value)} rows={2}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
+              />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
-              <span>Service fee (2%)</span><span style={{ color: '#aaa' }}>{feeSats.toLocaleString()} sats</span>
-            </div>
-            <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: '#888' }}>Total to pay</span>
-              <span style={{ color: design.borderColor, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
-            </div>
-            <div style={{ marginTop: 6, color: '#444', fontSize: 10 }}>≈ ฿{satsToTHB(totalSats)} THB</div>
-          </div>
 
-          {status === 'preview' && (
+            <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '14px 16px', marginBottom: 20, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                <span>Gift amount</span><span style={{ color: '#aaa' }}>{amountSats.toLocaleString()} sats</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                <span>Service fee (2%)</span><span style={{ color: '#aaa' }}>{feeSats.toLocaleString()} sats</span>
+              </div>
+              <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#888' }}>Total to pay</span>
+                <span style={{ color: design.borderColor, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
+              </div>
+              <div style={{ marginTop: 6, color: '#444', fontSize: 10 }}>≈ ฿{satsToTHB(totalSats)} THB</div>
+            </div>
+
             <button onClick={handleGenerate} style={{
               width: '100%', padding: '14px', borderRadius: 10,
               background: design.borderColor, color: '#000',
               fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
               border: 'none', cursor: 'pointer',
             }}>Generate Invoice ⚡</button>
-          )}
+          </>)}
 
+          {/* PAY STATE — invoice QR fills the whole left panel */}
           {status === 'pay' && invoice && (
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: '#F7931A', marginBottom: 14 }}>⏱ {mins}:{secs}</div>
-              <div style={{ background: '#fff', padding: 14, borderRadius: 12, display: 'inline-block', marginBottom: 12 }}>
-                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(invoice.paymentRequest)}`} alt="Invoice QR" style={{ display: 'block', width: 200, height: 200 }} />
+            <div>
+              <span style={labelStyle}>PAY LIGHTNING INVOICE</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, color: design.borderColor, fontWeight: 700 }}>⏱ {mins}:{secs}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444' }}>remaining</div>
               </div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', wordBreak: 'break-all', marginBottom: 12, padding: '0 8px' }}>
-                {invoice.paymentRequest?.slice(0, 40)}...
+              <div style={{ background: '#fff', padding: 16, borderRadius: 14, display: 'inline-block', marginBottom: 16 }}>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(invoice.paymentRequest)}`}
+                  alt="Lightning Invoice QR"
+                  style={{ display: 'block', width: 240, height: 240 }}
+                />
               </div>
-              <button onClick={() => { navigator.clipboard.writeText(invoice.paymentRequest); showToast('Copied!'); }} style={{ padding: '10px 24px', borderRadius: 8, background: '#1a1a1a', border: '1px solid #333', color: '#aaa', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
-                Copy Invoice
-              </button>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444', marginTop: 12 }}>• Waiting for payment...</div>
+              <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '12px 14px', marginBottom: 14, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', wordBreak: 'break-all', lineHeight: 1.6 }}>
+                {invoice.paymentRequest?.slice(0, 80)}...
+              </div>
+              <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '12px 16px', marginBottom: 14, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                  <span>You pay</span><span style={{ color: design.borderColor }}>{totalSats.toLocaleString()} sats</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                  <span>Recipient gets</span><span style={{ color: '#39ff14' }}>{amountSats.toLocaleString()} sats</span>
+                </div>
+              </div>
+              <button onClick={() => { navigator.clipboard.writeText(invoice.paymentRequest); showToast('Copied!'); }} style={{
+                width: '100%', padding: '12px', borderRadius: 10,
+                background: '#1a1a1a', border: '1px solid #333',
+                color: '#aaa', fontFamily: 'var(--font-mono)', fontSize: 13, cursor: 'pointer', marginBottom: 12,
+              }}>Copy Invoice</button>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444', textAlign: 'center' }}>
+                • Waiting for payment...
+              </div>
             </div>
           )}
 
+          {/* READY STATE — download/print */}
           {status === 'ready' && (
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={handleDownloadPNG} style={{ flex: 1, padding: '12px', borderRadius: 10, background: design.borderColor, color: '#000', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, border: 'none', cursor: 'pointer' }}>
-                ↓ Download PNG
-              </button>
-              <button onClick={() => window.print()} style={{ flex: 1, padding: '12px', borderRadius: 10, background: '#1a1a1a', color: '#aaa', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, border: '1px solid #333', cursor: 'pointer' }}>
-                🖨 Print
-              </button>
+            <div>
+              <span style={labelStyle}>GIFT CARD READY</span>
+              <div style={{ background: '#0d1a0d', border: '1px solid #1a3a1a', borderRadius: 10, padding: '16px', marginBottom: 28, fontFamily: 'var(--font-mono)', fontSize: 13, color: '#39ff14' }}>
+                ✓ Payment received! Your gift card is ready to share.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <button onClick={handleDownloadPNG} style={{
+                  width: '100%', padding: '14px', borderRadius: 10,
+                  background: design.borderColor, color: '#000',
+                  fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
+                  border: 'none', cursor: 'pointer',
+                }}>↓ Download PNG</button>
+                <button onClick={() => window.print()} style={{
+                  width: '100%', padding: '14px', borderRadius: 10,
+                  background: '#1a1a1a', color: '#aaa',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
+                  border: '1px solid #333', cursor: 'pointer',
+                }}>🖨 Print</button>
+                <button onClick={() => { setStatus('preview'); setInvoice(null); setGiftCard(null); }} style={{
+                  width: '100%', padding: '12px', borderRadius: 10,
+                  background: 'transparent', color: '#555',
+                  fontFamily: 'var(--font-mono)', fontSize: 12,
+                  border: '1px solid #222', cursor: 'pointer',
+                }}>+ Create another gift card</button>
+              </div>
             </div>
           )}
         </div>
 
-        {/* RIGHT — Card 1:2 */}
+        {/* RIGHT — Card preview, always visible */}
         <div>
           <span style={{ ...labelStyle, marginBottom: 16 }}>PREVIEW</span>
           <div ref={cardRef} style={{
@@ -364,11 +406,11 @@ export default function CreateGift() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', position: 'relative' }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.accentAlt }}>by {design.designer}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isReady ? '#39ff14' : design.accentAlt }}>{isReady ? '✓ READY TO SEND' : 'PREVIEW'}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isReady ? '#39ff14' : design.accentAlt }}>{isReady ? '✓ READY TO SEND' : isPaying ? '⏳ AWAITING PAYMENT' : 'PREVIEW'}</div>
               </div>
             </div>
 
-            {/* BOTTOM — dark */}
+            {/* BOTTOM — dark QR section */}
             <div style={{
               background: design.qrBg,
               borderTop: `1px solid ${design.qrBorder}`,
@@ -402,6 +444,7 @@ export default function CreateGift() {
             พับครึ่งได้ • ปริ้น • ส่ง social
           </div>
         </div>
+
       </div>
     </div>
   );
