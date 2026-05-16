@@ -151,16 +151,16 @@ export default function CreateGift() {
 
   async function handleGenerate() {
     try {
-      const res = await fetch(`${BACKEND}/api/create-gift`, {
+      const res = await fetch(`${BACKEND}/api/gift/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amountSats, senderNote, designId: design.id }),
       });
       const data = await res.json();
-      if (data.invoice) {
+      if (data.paymentRequest) {
         setInvoice(data);
         setStatus('pay');
-        startPolling(data.paymentHash);
+        startPolling(data.giftCardId);
       } else {
         showToast(data.error || 'Failed to create invoice', 'error');
       }
@@ -169,12 +169,12 @@ export default function CreateGift() {
     }
   }
 
-  function startPolling(paymentHash) {
+  function startPolling(giftCardId) {
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`${BACKEND}/api/check-payment/${paymentHash}`);
+        const res = await fetch(`${BACKEND}/api/gift/${giftCardId}`);
         const data = await res.json();
-        if (data.paid) {
+        if (data.status === 'minted') {
           clearInterval(pollRef.current);
           clearInterval(timerRef.current);
           setGiftCard(data);
@@ -307,12 +307,12 @@ export default function CreateGift() {
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: '#F7931A', marginBottom: 14 }}>⏱ {mins}:{secs}</div>
               <div style={{ background: '#fff', padding: 14, borderRadius: 12, display: 'inline-block', marginBottom: 12 }}>
-                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(invoice.invoice)}`} alt="Invoice QR" style={{ display: 'block', width: 200, height: 200 }} />
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(invoice.paymentRequest)}`} alt="Invoice QR" style={{ display: 'block', width: 200, height: 200 }} />
               </div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', wordBreak: 'break-all', marginBottom: 12, padding: '0 8px' }}>
-                {invoice.invoice?.slice(0, 40)}...
+                {invoice.paymentRequest?.slice(0, 40)}...
               </div>
-              <button onClick={() => { navigator.clipboard.writeText(invoice.invoice); showToast('Copied!'); }} style={{ padding: '10px 24px', borderRadius: 8, background: '#1a1a1a', border: '1px solid #333', color: '#aaa', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
+              <button onClick={() => { navigator.clipboard.writeText(invoice.paymentRequest); showToast('Copied!'); }} style={{ padding: '10px 24px', borderRadius: 8, background: '#1a1a1a', border: '1px solid #333', color: '#aaa', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', width: '100%' }}>
                 Copy Invoice
               </button>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444', marginTop: 12 }}>• Waiting for payment...</div>
