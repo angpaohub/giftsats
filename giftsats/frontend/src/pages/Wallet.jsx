@@ -200,7 +200,7 @@ export default function Wallet() {
                   color: '#F7931A', background: 'rgba(0,0,0,0.6)',
                   padding: '6px 14px', borderRadius: 20,
                 }}>
-                  ส่องกล้องไปที่ QR บน gift card
+                  Scan the QR code on the gift card
                 </div>
               </div>
 
