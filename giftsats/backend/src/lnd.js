@@ -2,13 +2,12 @@ import https from 'https';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const LND_URL = process.env.LND_REST_URL?.replace('https://', '');
+const LND_HOST = process.env.LND_REST_URL?.replace('https://', '').replace('http://', '');
 const MACAROON = process.env.LND_MACAROON_HEX;
 const agent = new https.Agent({ rejectUnauthorized: false });
 
 async function lndFetch(path, options = {}) {
-  const url = `https://${LND_URL}${path}`;
-  const res = await fetch(url, {
+  const res = await fetch(`https://${LND_HOST}${path}`, {
     ...options,
     agent,
     headers: {
@@ -17,7 +16,7 @@ async function lndFetch(path, options = {}) {
       ...options.headers,
     },
   });
-  if (!res.ok) throw new Error(`LND error ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`LND ${res.status}: ${await res.text()}`);
   return res.json();
 }
 
@@ -37,9 +36,15 @@ export async function checkPayment(paymentHash) {
 export async function payLightningAddress(lightningAddress, amountSats) {
   const [user, domain] = lightningAddress.split('@');
   if (!user || !domain) throw new Error('Invalid Lightning address');
-
   const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`);
   if (!lnurlRes.ok) throw new Error('Could not resolve Lightning address');
   const lnurlData = await lnurlRes.json();
-
-  co
+  const amountMsats = amountSats * 1000;
+  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`);
+  if (!invoiceRes.ok) throw new Error('Could not get invoice');
+  const { pr } = await invoiceRes.json();
+  return lndFetch('/v1/channels/transactions', {
+    method: 'POST',
+    body: JSON.stringify({ payment_request: pr }),
+  });
+}
