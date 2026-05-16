@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import CreateGift from './pages/CreateGift.jsx';
-import Explore from './pages/Explore.jsx';
 import Wallet from './pages/Wallet.jsx';
+import HowToRedeem from './pages/HowToRedeem.jsx';
 
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
-  { id: 'explore', label: '🎨 Explore Designs' },
   { id: 'wallet', label: '💼 Your Wallet' },
+  { id: 'redeem', label: '📖 How to Redeem' },
 ];
 
 export default function App() {
@@ -14,17 +14,11 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
       <header style={{
-        padding: '20px 24px 0',
-        borderBottom: '1px solid #1a1a1a',
-        background: '#0a0a0a',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
+        padding: '20px 24px 0', borderBottom: '1px solid #1a1a1a',
+        background: '#0a0a0a', position: 'sticky', top: 0, zIndex: 100,
       }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
-          {/* Logo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
             <div style={{
               width: 36, height: 36, borderRadius: 8,
@@ -41,43 +35,31 @@ export default function App() {
               padding: '2px 8px', borderRadius: 4, color: '#666',
             }}>TESTNET</span>
           </div>
-
-          {/* Tabs */}
           <div style={{ display: 'flex', gap: 0 }}>
             {tabs.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  padding: '10px 20px',
-                  background: 'none',
-                  color: activeTab === tab.id ? '#F7931A' : '#555',
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: activeTab === tab.id ? 600 : 400,
-                  fontSize: 13,
-                  borderBottom: activeTab === tab.id ? '2px solid #F7931A' : '2px solid transparent',
-                  transition: 'all 0.2s',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {tab.label}
-              </button>
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+                padding: '10px 20px', background: 'none', cursor: 'pointer',
+                color: activeTab === tab.id ? '#F7931A' : '#555',
+                fontFamily: 'var(--font-display)', fontWeight: activeTab === tab.id ? 600 : 400,
+                fontSize: 13, border: 'none',
+                borderBottom: activeTab === tab.id ? '2px solid #F7931A' : '2px solid transparent',
+                transition: 'all 0.2s', whiteSpace: 'nowrap',
+              }}>{tab.label}</button>
             ))}
           </div>
         </div>
       </header>
 
-      {/* Page content */}
       <main style={{ flex: 1, maxWidth: 900, margin: '0 auto', width: '100%', padding: '32px 24px' }}>
         {activeTab === 'create' && <CreateGift />}
-        {activeTab === 'explore' && <Explore />}
         {activeTab === 'wallet' && <Wallet />}
+        {activeTab === 'redeem' && <HowToRedeem />}
       </main>
 
-      {/* Footer */}
       <footer style={{ padding: '16px 24px', textAlign: 'center', color: '#333', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
         giftsats • powered by Lightning & Cashu • not your keys, not your coins
       </footer>
     </div>
   );
 }
+
