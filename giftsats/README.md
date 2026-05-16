@@ -1,4 +1,4 @@
-# GiftSats ⚡
+# GiftSats 
 
 Send Bitcoin as beautiful gift cards — powered by Lightning & Cashu.
 
