@@ -250,7 +250,7 @@ export default function Wallet() {
           )}
 
           <div>
-            <span style={labelStyle}>LIGHTNING ADDRESS (OPTIONAL)</span>
+            <span style={labelStyle}>LIGHTNING ADDRESS (REQUIRED)</span>
             <input
               type="text"
               placeholder="you@walletofsatoshi.com"
@@ -264,19 +264,18 @@ export default function Wallet() {
               }}
             />
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', marginTop: 6 }}>
-              ถ้าไม่ใส่ จะ redeem เข้า wallet ของ platform
             </div>
           </div>
 
           <button
             onClick={handleRedeem}
-            disabled={!cashuToken || loading}
+            disabled={!cashuToken || !lightningAddress || loading}
             style={{
               width: '100%', padding: '14px', borderRadius: 10,
-              background: cashuToken ? '#F7931A' : '#1a1a1a',
-              color: cashuToken ? '#000' : '#444',
+              background: cashuToken && lightningAddress ? '#F7931A' : '#1a1a1a',
+              color: cashuToken && lightningAddress ? '#000' : '#444',
               fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
-              border: 'none', cursor: cashuToken ? 'pointer' : 'not-allowed',
+              border: 'none', cursor: cashuToken && lightningAddress ? 'pointer' : 'not-allowed',
               transition: 'all 0.2s',
             }}
           >
