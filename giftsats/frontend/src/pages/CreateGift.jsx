@@ -293,14 +293,16 @@ export default function CreateGift() {
                 onChange={e => setSenderNote(e.target.value)} rows={2}
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
               />
-              <div style={{ marginBottom: 24 }}>
-            <span style={labelStyle}>FROM (OPTIONAL)</span>
-            <input
-            type="text"
-            placeholder="ํSender Name"
-            value={senderName}
-            onChange={e => setSenderName(e.target.value)}
-           style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <span style={labelStyle}>FROM (OPTIONAL)</span>
+              <input
+                type="text"
+                placeholder="Sender Name"
+                value={senderName}
+                onChange={e => setSenderName(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
             </div>
 
@@ -462,7 +464,7 @@ export default function CreateGift() {
             </div>
           </div>
           <div style={{ marginTop: 12, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', textAlign: 'center' }}>
-            พับครึ่งได้ • ปริ้น • ส่ง social
+      
           </div>
         </div>
 
