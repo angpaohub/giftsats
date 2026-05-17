@@ -110,6 +110,13 @@ export async function updateGiftCard(id, fields) {
   return getGiftCard(id);
 }
 
+export async function listAllCards() {
+  const { rows } = await pool.query(
+    'SELECT * FROM gift_cards ORDER BY created_at DESC LIMIT 500'
+  );
+  return rows.map(dbRowToCard);
+}
+
 // ── Stats ────────────────────────────────────────────────
 export async function getStats() {
   const { rows } = await pool.query(`
