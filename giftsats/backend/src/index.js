@@ -81,39 +81,36 @@ app.get('/api/gift/:id', async (req, res) => {
     const giftCard = await getGiftCard(req.params.id);
     if (!giftCard) return res.status(404).json({ error: 'Not found' });
 
-    if (giftCard.status === 'minted') return res.json(giftCard);
+    // Already minted or redeemed — return as-is (never re-process)
+    if (giftCard.status === 'minted' || giftCard.status === 'redeemed') {
+      return res.json(giftCard);
+    }
 
     if (giftCard.status === 'pending') {
       const paid = await checkPayment(giftCard.paymentHash);
       if (paid) {
-        let cashuToken = null;
-        let cashuQuote = null;
-        try {
-          const mintRes = await fetch(`${MINT_URL}/v1/mint/quote/bolt11`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount: giftCard.amountSats, unit: 'sat' }),
-          });
-          const mintData = await mintRes.json();
-          cashuQuote = mintData.quote;
-          cashuToken = `cashuA_${Buffer.from(JSON.stringify({
-            mint: MINT_URL,
-            amount: giftCard.amountSats,
-            quote: mintData.quote,
-          })).toString('base64')}`;
-        } catch (mintErr) {
-          console.error('mint error:', mintErr.message);
-          cashuToken = `cashuA_${giftCard.id}_${giftCard.amountSats}sats`;
-        }
+        // Build a placeholder token — real Cashu mint integration pending
+        // Token encodes giftCardId so redeem endpoint can look it up safely
+        const cashuToken = `cashuA_${Buffer.from(JSON.stringify({
+          giftCardId: giftCard.id,
+          amount: giftCard.amountSats,
+        })).toString('base64')}`;
 
-       const updated = await updateGiftCard(giftCard.id, {
+        const updated = await updateGiftCard(giftCard.id, {
           status: 'minted',
           cashuToken,
-          cashuQuote,
+          cashuQuote: null,
         });
+
+        // Pay platform fee
         if (process.env.PLATFORM_WALLET && giftCard.platformFee > 0) {
-          await payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee);
+          try {
+            await payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee);
+          } catch (feeErr) {
+            console.error('platform fee error (non-fatal):', feeErr.message);
+          }
         }
+
         return res.json(updated);
       }
     }
@@ -125,37 +122,56 @@ app.get('/api/gift/:id', async (req, res) => {
   }
 });
 
-// ── Redeem Cashu token ──────────────────────────────────
+// ── Redeem gift card ────────────────────────────────────
 app.post('/api/redeem', async (req, res) => {
   try {
     const { cashuToken, lightningAddress, giftCardId } = req.body;
     if (!cashuToken) return res.status(400).json({ error: 'No token provided' });
+    if (!lightningAddress) return res.status(400).json({ error: 'Lightning address required' });
+    if (!giftCardId) return res.status(400).json({ error: 'Gift card ID required' });
 
-    // Parse amount from token
-    let amountSats = 0;
+    // ── DOUBLE SPEND GUARD ──────────────────────────────
+    const card = await getGiftCard(giftCardId);
+    if (!card) return res.status(404).json({ error: 'Gift card not found' });
+    if (card.status === 'redeemed') {
+      return res.status(409).json({ error: 'Gift card already redeemed' });
+    }
+    if (card.status !== 'minted') {
+      return res.status(400).json({ error: 'Gift card not ready for redemption' });
+    }
+
+    // Verify token matches this card
+    let tokenData = null;
     try {
-      const decoded = JSON.parse(Buffer.from(cashuToken.replace('cashuA_', '').split('_')[0], 'base64').toString());
-      amountSats = decoded.amount || 0;
+      tokenData = JSON.parse(Buffer.from(cashuToken.replace('cashuA_', ''), 'base64').toString());
     } catch {
-      amountSats = 1000; // fallback
+      return res.status(400).json({ error: 'Invalid token format' });
     }
 
-    if (lightningAddress) {
+    if (tokenData.giftCardId !== giftCardId) {
+      return res.status(400).json({ error: 'Token does not match gift card' });
+    }
+
+    const amountSats = card.amountSats;
+
+    // ── MARK REDEEMED FIRST (prevent double spend) ──────
+    await updateGiftCard(giftCardId, {
+      status: 'redeemed',
+      redeemedTo: lightningAddress,
+      redeemedAt: new Date().toISOString(),
+    });
+
+    // ── PAY OUT ─────────────────────────────────────────
+    try {
       await payLightningAddress(lightningAddress, amountSats);
-
-      // Mark as redeemed in DB if giftCardId provided
-      if (giftCardId) {
-        await updateGiftCard(giftCardId, {
-          status: 'redeemed',
-          redeemedTo: lightningAddress,
-          redeemedAt: new Date().toISOString(),
-        });
-      }
-
-      return res.json({ success: true, amountSats, msg: `Sent to ${lightningAddress}` });
+    } catch (payErr) {
+      // Payment failed — roll back status so user can retry
+      console.error('payout failed, rolling back:', payErr.message);
+      await updateGiftCard(giftCardId, { status: 'minted' });
+      return res.status(500).json({ error: `Payment failed: ${payErr.message}` });
     }
 
-    res.json({ success: true, amountSats, cashuToken });
+    return res.json({ success: true, amountSats, msg: `Sent ${amountSats} sats to ${lightningAddress}` });
   } catch (e) {
     console.error('redeem error:', e.message);
     res.status(500).json({ error: e.message });
