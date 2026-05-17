@@ -34,11 +34,7 @@ export default function App() {
             <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, letterSpacing: '-0.5px' }}>
               Gift<span style={{ color: '#F7931A' }}>Sats</span>
             </span>
-            <span style={{
-              marginLeft: 8, fontSize: 10, fontFamily: 'var(--font-mono)',
-              background: '#1a1a1a', border: '1px solid #2a2a2a',
-              padding: '2px 8px', borderRadius: 4, color: '#666',
-            }}>TESTNET</span>
+        
           </div>
           <div style={{ display: 'flex', gap: 0 }}>
             {tabs.map(tab => (
