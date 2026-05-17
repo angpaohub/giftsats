@@ -15,7 +15,7 @@ const headers = {
 export async function createInvoice(amountSats, memo = 'GiftSats') {
   const res = await fetch(`${LND_URL}/v1/invoices`, {
     method: 'POST', agent, headers,
-    body: JSON.stringify({ value: amountSats, memo, expiry: 600 }),
+    body: JSON.stringify({ value: amountSats, memo, expiry: 600, private: true }),
   });
   if (!res.ok) throw new Error(`LND invoice error: ${await res.text()}`);
   return res.json();
