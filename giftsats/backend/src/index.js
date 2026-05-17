@@ -43,9 +43,9 @@ app.get('/api/designs', (req, res) => res.json(listDesigns()));
 app.post('/api/gift/create', async (req, res) => {
   try {
     const { amountSats, designId, senderNote } = req.body;
-    if (!amountSats || amountSats < 100) {
-      return res.status(400).json({ error: 'Minimum 100 sats' });
-    }
+   if (!amountSats || amountSats < 1000) {
+  return res.status(400).json({ error: 'Minimum 1000 sats' });
+}
 
     const design = listDesigns().find(d => d.id === designId) || listDesigns()[0];
     const platformFee = Math.ceil(amountSats * PLATFORM_FEE_PERCENT);
