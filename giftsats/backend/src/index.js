@@ -106,11 +106,14 @@ app.get('/api/gift/:id', async (req, res) => {
           cashuToken = `cashuA_${giftCard.id}_${giftCard.amountSats}sats`;
         }
 
-        const updated = await updateGiftCard(giftCard.id, {
+       const updated = await updateGiftCard(giftCard.id, {
           status: 'minted',
           cashuToken,
           cashuQuote,
         });
+        if (process.env.PLATFORM_WALLET && giftCard.platformFee > 0) {
+          await payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee);
+        }
         return res.json(updated);
       }
     }
