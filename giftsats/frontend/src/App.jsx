@@ -2,6 +2,7 @@ import { useState } from 'react';
 import CreateGift from './pages/CreateGift.jsx';
 import Wallet from './pages/Wallet.jsx';
 import HowToRedeem from './pages/HowToRedeem.jsx';
+import Admin from './pages/Admin.jsx';
 
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
@@ -9,8 +10,12 @@ const tabs = [
   { id: 'redeem', label: '📖 How to Redeem' },
 ];
 
+const isAdmin = window.location.pathname === '/admin';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('create');
+
+  if (isAdmin) return <Admin />;
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -49,17 +54,14 @@ export default function App() {
           </div>
         </div>
       </header>
-
       <main style={{ flex: 1, maxWidth: 900, margin: '0 auto', width: '100%', padding: '32px 24px' }}>
         {activeTab === 'create' && <CreateGift />}
         {activeTab === 'wallet' && <Wallet />}
         {activeTab === 'redeem' && <HowToRedeem />}
       </main>
-
       <footer style={{ padding: '16px 24px', textAlign: 'center', color: '#333', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
         giftsats • powered by Lightning & Cashu • not your keys, not your coins
       </footer>
     </div>
   );
 }
-
