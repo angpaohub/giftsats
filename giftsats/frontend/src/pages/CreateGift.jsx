@@ -49,7 +49,8 @@ const designs = [
   },
 ];
 
-const SAT_PRESETS = [1000, 5000, 10000, 21000, 100000];
+const SAT_PRESETS = [1000, 2100, 5000, 10000, 21000];
+const MIN_SATS = 1000;
 const EXCHANGE_RATE = 3500000;
 const FEE_PERCENT = 0.02;
 
@@ -111,7 +112,7 @@ function useIsMobile() {
 
 export default function CreateGift() {
   const [selectedDesign, setSelectedDesign] = useState(0);
-  const [amountSats, setAmountSats] = useState(21000);
+  const [amountSats, setAmountSats] = useState(1000);
   const [customAmount, setCustomAmount] = useState('');
   const [senderNote, setSenderNote] = useState('');
   const [senderName, setSenderName] = useState('');
@@ -283,8 +284,14 @@ export default function CreateGift() {
               </div>
               <input type="number" placeholder="Custom amount (sats)" value={customAmount}
                 onChange={e => { setCustomAmount(e.target.value); setAmountSats(Number(e.target.value) || 0); }}
+                min={1000}
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', boxSizing: 'border-box' }}
               />
+              {customAmount && amountSats < MIN_SATS && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#ff6b6b', marginTop: 6 }}>
+                  Minimum 1,000 sats
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: 24 }}>
@@ -320,11 +327,12 @@ export default function CreateGift() {
               <div style={{ marginTop: 6, color: '#444', fontSize: 10 }}>≈ ฿{satsToTHB(totalSats)} THB</div>
             </div>
 
-            <button onClick={handleGenerate} style={{
+            <button onClick={handleGenerate} disabled={amountSats < MIN_SATS} style={{
               width: '100%', padding: '14px', borderRadius: 10,
-              background: design.borderColor, color: '#000',
+              background: amountSats >= MIN_SATS ? design.borderColor : '#1a1a1a',
+              color: amountSats >= MIN_SATS ? '#000' : '#444',
               fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
-              border: 'none', cursor: 'pointer',
+              border: 'none', cursor: amountSats >= MIN_SATS ? 'pointer' : 'not-allowed',
             }}>Generate Invoice ⚡</button>
           </>)}
 
