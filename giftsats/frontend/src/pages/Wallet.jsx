@@ -7,12 +7,32 @@ const labelStyle = {
   letterSpacing: 2, display: 'block', marginBottom: 10,
 };
 
+function parseGiftCardId(token) {
+  try {
+    const base64 = token.replace('cashuA_', '');
+    const decoded = JSON.parse(Buffer.from(base64, 'base64').toString());
+    return decoded.giftCardId || null;
+  } catch {
+    return null;
+  }
+}
+
+// Browser-compatible base64 decode
+function b64decode(str) {
+  try {
+    return JSON.parse(atob(str));
+  } catch {
+    return null;
+  }
+}
+
 export default function Wallet() {
   const [tab, setTab] = useState('redeem');
   const [cashuToken, setCashuToken] = useState('');
   const [lightningAddress, setLightningAddress] = useState('');
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [parsedGiftCardId, setParsedGiftCardId] = useState(null);
 
   // Send tab
   const [lnAddress, setLnAddress] = useState('');
@@ -29,7 +49,18 @@ export default function Wallet() {
   const rafRef = useRef(null);
   const jsQRRef = useRef(null);
 
-  // Load jsQR lazily
+  // Parse giftCardId whenever token changes
+  useEffect(() => {
+    if (!cashuToken) { setParsedGiftCardId(null); return; }
+    try {
+      const base64 = cashuToken.replace('cashuA_', '');
+      const decoded = b64decode(base64);
+      setParsedGiftCardId(decoded?.giftCardId || null);
+    } catch {
+      setParsedGiftCardId(null);
+    }
+  }, [cashuToken]);
+
   async function loadJsQR() {
     if (jsQRRef.current) return jsQRRef.current;
     const mod = await import('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');
@@ -99,19 +130,24 @@ export default function Wallet() {
   useEffect(() => () => stopCamera(), [stopCamera]);
 
   async function handleRedeem() {
-    if (!cashuToken) return;
+    if (!cashuToken || !lightningAddress) return;
     setLoading(true);
     setStatus(null);
     try {
       const res = await fetch(`${BACKEND}/api/redeem`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cashuToken, lightningAddress: lightningAddress || undefined }),
+        body: JSON.stringify({
+          cashuToken,
+          lightningAddress,
+          giftCardId: parsedGiftCardId,   // ← ส่ง giftCardId ไปด้วย
+        }),
       });
       const data = await res.json();
       if (data.success) {
-        setStatus({ ok: true, msg: lightningAddress ? `✓ Sent to ${lightningAddress}` : '✓ Token redeemed' });
+        setStatus({ ok: true, msg: `✓ Sent ${data.amountSats} sats to ${lightningAddress}` });
         setCashuToken('');
+        setParsedGiftCardId(null);
       } else {
         setStatus({ ok: false, msg: data.error || 'Failed to redeem' });
       }
@@ -176,13 +212,10 @@ export default function Wallet() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <span style={labelStyle}>CASHU TOKEN</span>
 
-          {/* Camera scanner */}
           {scanning ? (
             <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', aspectRatio: '1/1' }}>
               <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} playsInline muted />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
-
-              {/* Scan overlay */}
               <div style={{
                 position: 'absolute', inset: 0,
                 display: 'flex', flexDirection: 'column',
@@ -203,8 +236,6 @@ export default function Wallet() {
                   Scan the QR code on the gift card
                 </div>
               </div>
-
-              {/* Close button */}
               <button onClick={stopCamera} style={{
                 position: 'absolute', top: 12, right: 12,
                 background: 'rgba(0,0,0,0.7)', border: '1px solid #444',
@@ -245,7 +276,7 @@ export default function Wallet() {
 
           {cashuToken && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#39ff14', padding: '8px 12px', background: '#0d1a0d', borderRadius: 8, border: '1px solid #1a3a1a' }}>
-              ✓ Token พร้อมแล้ว
+              ✓ Token พร้อมแล้ว {parsedGiftCardId ? `• Card ID: ${parsedGiftCardId.slice(0, 8)}...` : '⚠ ไม่พบ Card ID'}
             </div>
           )}
 
@@ -263,8 +294,6 @@ export default function Wallet() {
                 outline: 'none', boxSizing: 'border-box',
               }}
             />
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', marginTop: 6 }}>
-            </div>
           </div>
 
           <button
