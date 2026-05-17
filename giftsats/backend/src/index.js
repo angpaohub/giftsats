@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createInvoice, checkPayment, payLightningAddress } from './lnd.js';
-import { initDB, createGiftCard, getGiftCard, updateGiftCard, listDesigns, getStats } from './store.js';
+import { initDB, createGiftCard, getGiftCard, updateGiftCard, listDesigns, getStats, listAllCards } from './store.js';
 
 dotenv.config();
 
@@ -21,6 +21,16 @@ app.get('/api/stats', async (req, res) => {
   try {
     const stats = await getStats();
     res.json(stats);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: list all cards ───────────────────────────────
+app.get('/api/admin/cards', async (req, res) => {
+  try {
+    const cards = await listAllCards();
+    res.json(cards);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
