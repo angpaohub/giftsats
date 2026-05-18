@@ -487,7 +487,7 @@ export default function CreateGift() {
               alignItems: 'center', padding: '24px 20px 20px', gap: 12,
             }}>
               <div style={{ width: '60%', borderTop: `1px dashed ${design.qrAccent}33` }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.qrAccent, letterSpacing: 2 }}>LIGHTNING REDEEM QR</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.qrAccent, letterSpacing: 2 }}>REDEEM QR</span>
               <div style={{ position: 'relative' }}>
                 <div style={{ background: '#fff', padding: 10, borderRadius: 10, filter: isReady ? 'none' : 'blur(7px)', transition: 'filter 0.6s ease' }}>
                   <canvas ref={qrCanvasRef} width={160} height={160} style={{ display: 'block', borderRadius: 4 }} />
