@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { createInvoice, checkPayment, payLightningAddress } from './lnd.js';
+import { createInvoice, checkPayment, payLightningAddress, getChannelBalance } from './lnd.js';
 import { initDB, createGiftCard, getGiftCard, updateGiftCard, listDesigns, getStats, listAllCards } from './store.js';
 
 dotenv.config();
@@ -46,6 +46,15 @@ app.post('/api/gift/create', async (req, res) => {
    if (!amountSats || amountSats < 1000) {
   return res.status(400).json({ error: 'Minimum 1000 sats' });
 }
+
+    // ── CHECK INBOUND CAPACITY ─────────────────────────
+    const { remoteSats } = await getChannelBalance();
+    if (remoteSats < amountSats) {
+      return res.status(400).json({
+        error: `Not enough capacity. Available: ${remoteSats.toLocaleString()} sats`,
+        availableSats: remoteSats,
+      });
+    }
 
     const design = listDesigns().find(d => d.id === designId) || listDesigns()[0];
     const platformFee = Math.ceil(amountSats * PLATFORM_FEE_PERCENT);
