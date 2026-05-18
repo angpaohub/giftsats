@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createInvoice, checkPayment, payLightningAddress, getChannelBalance } from './lnd.js';
-import { initDB, createGiftCard, getGiftCard, updateGiftCard, listDesigns, getStats, listAllCards } from './store.js';
+import { initDB, createGiftCard, getGiftCard, updateGiftCard, listDesigns, getStats, listAllCards, listExpiredUnredeemed } from './store.js';
 
 dotenv.config();
 
@@ -10,8 +10,8 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
 
-const MINT_URL = process.env.MINT_URL || 'http://localhost:3338';
 const PLATFORM_FEE_PERCENT = 0.02; // 2%
+const NETWORK_FEE_SATS = 2;        // fixed, shown transparently to user
 
 // ── Health ──────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ ok: true }));
@@ -42,10 +42,19 @@ app.get('/api/designs', (req, res) => res.json(listDesigns()));
 // ── Create gift card ────────────────────────────────────
 app.post('/api/gift/create', async (req, res) => {
   try {
-    const { amountSats, designId, senderNote } = req.body;
-   if (!amountSats || amountSats < 1000) {
-  return res.status(400).json({ error: 'Minimum 1000 sats' });
-}
+    const { amountSats, designId, senderNote, senderLightningAddress } = req.body;
+
+    if (!amountSats || amountSats < 1000) {
+      return res.status(400).json({ error: 'Minimum 1000 sats' });
+    }
+
+    // Validate Lightning address format if provided
+    if (senderLightningAddress) {
+      const lnAddrRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+      if (!lnAddrRegex.test(senderLightningAddress)) {
+        return res.status(400).json({ error: 'Invalid Lightning address format' });
+      }
+    }
 
     // ── CHECK INBOUND CAPACITY ─────────────────────────
     const { remoteSats } = await getChannelBalance();
@@ -58,8 +67,7 @@ app.post('/api/gift/create', async (req, res) => {
 
     const design = listDesigns().find(d => d.id === designId) || listDesigns()[0];
     const platformFee = Math.ceil(amountSats * PLATFORM_FEE_PERCENT);
-    const networkFee = 2;
-    const totalSats = amountSats + platformFee + networkFee;
+    const totalSats = amountSats + platformFee + NETWORK_FEE_SATS;
 
     const invoice = await createInvoice(totalSats, `GiftSats: ${amountSats} sats`);
     const giftCard = await createGiftCard({
@@ -67,6 +75,7 @@ app.post('/api/gift/create', async (req, res) => {
       designId: design.id,
       platformFee,
       senderNote: senderNote || '',
+      senderLightningAddress: senderLightningAddress || null,
       paymentHash: invoice.r_hash,
       paymentRequest: invoice.payment_request,
     });
@@ -77,6 +86,8 @@ app.post('/api/gift/create', async (req, res) => {
       totalSats,
       amountSats,
       platformFee,
+      networkFee: NETWORK_FEE_SATS,
+      expiresAt: giftCard.expiresAt,
     });
   } catch (e) {
     console.error('create error:', e.message);
@@ -90,7 +101,6 @@ app.get('/api/gift/:id', async (req, res) => {
     const giftCard = await getGiftCard(req.params.id);
     if (!giftCard) return res.status(404).json({ error: 'Not found' });
 
-    // Already minted or redeemed — return as-is (never re-process)
     if (giftCard.status === 'minted' || giftCard.status === 'redeemed') {
       return res.json(giftCard);
     }
@@ -98,8 +108,6 @@ app.get('/api/gift/:id', async (req, res) => {
     if (giftCard.status === 'pending') {
       const paid = await checkPayment(giftCard.paymentHash);
       if (paid) {
-        // Build a placeholder token — real Cashu mint integration pending
-        // Token encodes giftCardId so redeem endpoint can look it up safely
         const cashuToken = `cashuA_${Buffer.from(JSON.stringify({
           giftCardId: giftCard.id,
           amount: giftCard.amountSats,
@@ -111,7 +119,7 @@ app.get('/api/gift/:id', async (req, res) => {
           cashuQuote: null,
         });
 
-        // Pay platform fee
+        // Pay platform fee (non-fatal)
         if (process.env.PLATFORM_WALLET && giftCard.platformFee > 0) {
           try {
             await payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee);
@@ -149,6 +157,14 @@ app.post('/api/redeem', async (req, res) => {
       return res.status(400).json({ error: 'Gift card not ready for redemption' });
     }
 
+    // ── EXPIRY CHECK ────────────────────────────────────
+    if (card.expiresAt && new Date() > new Date(card.expiresAt)) {
+      return res.status(410).json({
+        error: 'Gift card has expired',
+        expiredAt: card.expiresAt,
+      });
+    }
+
     // Verify token matches this card
     let tokenData = null;
     try {
@@ -174,7 +190,6 @@ app.post('/api/redeem', async (req, res) => {
     try {
       await payLightningAddress(lightningAddress, amountSats);
     } catch (payErr) {
-      // Payment failed — roll back status so user can retry
       console.error('payout failed, rolling back:', payErr.message);
       await updateGiftCard(giftCardId, { status: 'minted' });
       return res.status(500).json({ error: `Payment failed: ${payErr.message}` });
@@ -192,7 +207,6 @@ app.post('/api/wallet/send', async (req, res) => {
   try {
     const { lightningAddress, amountSats } = req.body;
     if (!lightningAddress || !amountSats) return res.status(400).json({ error: 'Missing params' });
-
     await payLightningAddress(lightningAddress, amountSats);
     res.json({ success: true });
   } catch (e) {
@@ -201,10 +215,50 @@ app.post('/api/wallet/send', async (req, res) => {
   }
 });
 
+// ── Expiry cron job (runs every hour) ───────────────────
+// For expired cards:
+//   - Has senderLightningAddress → refund sats back to sender
+//   - No address → sats stay in node (platform revenue)
+async function processExpiredCards() {
+  const expired = await listExpiredUnredeemed();
+  if (expired.length === 0) return;
+
+  console.log(`[expiry] Processing ${expired.length} expired card(s)`);
+
+  for (const card of expired) {
+    try {
+      if (card.senderLightningAddress) {
+        // Attempt refund to sender
+        await payLightningAddress(card.senderLightningAddress, card.amountSats);
+        await updateGiftCard(card.id, {
+          status: 'redeemed',
+          refundStatus: 'refunded',
+          redeemedTo: card.senderLightningAddress,
+          redeemedAt: new Date().toISOString(),
+        });
+        console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress} (card ${card.id})`);
+      } else {
+        // No sender address → mark as forfeited, sats stay in node
+        await updateGiftCard(card.id, { refundStatus: 'forfeited' });
+        console.log(`[expiry] Forfeited ${card.amountSats} sats (no sender address, card ${card.id})`);
+      }
+    } catch (err) {
+      console.error(`[expiry] Failed to process card ${card.id}:`, err.message);
+      // Will retry next hour since refund_status stays 'none'
+    }
+  }
+}
+
 // ── Start ────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB()
-  .then(() => app.listen(PORT, () => console.log(`GiftSats backend running on :${PORT}`)))
+  .then(() => {
+    app.listen(PORT, () => console.log(`GiftSats backend running on :${PORT}`));
+
+    // Run expiry job immediately on startup, then every hour
+    processExpiredCards();
+    setInterval(processExpiredCards, 60 * 60 * 1000);
+  })
   .catch(err => {
     console.error('Failed to init DB:', err);
     process.exit(1);
