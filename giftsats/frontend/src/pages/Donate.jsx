@@ -19,7 +19,7 @@ export default function Donate() {
           Support <span style={{ color: '#F7931A' }}>GiftSats</span>
         </h2>
         <p style={{ color: '#555', fontFamily: mono, fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>
-          GiftSats is free to use. If you find it useful, consider sending a few sats to help keep the lights on.
+          If you find GiftSats useful, consider sending a few sats to help keep the lights on.
         </p>
       </div>
 
