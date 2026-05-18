@@ -46,3 +46,13 @@ export async function payLightningAddress(lightningAddress, amountSats) {
   if (!payRes.ok) throw new Error(`LND pay error: ${await payRes.text()}`);
   return payRes.json();
 }
+
+export async function getChannelBalance() {
+  const res = await fetch(`${LND_URL}/v1/balance/channels`, { agent, headers });
+  if (!res.ok) throw new Error(`LND balance error: ${await res.text()}`);
+  const data = await res.json();
+  return {
+    localSats: parseInt(data.local_balance?.sat || 0),
+    remoteSats: parseInt(data.remote_balance?.sat || 0),
+  };
+}
