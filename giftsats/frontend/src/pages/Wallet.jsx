@@ -11,6 +11,12 @@ function b64decode(str) {
   try { return JSON.parse(atob(str)); } catch { return null; }
 }
 
+// Load zxing-js — handles logo overlay QR codes
+async function loadZxing() {
+  const { BrowserMultiFormatReader } = await import('https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm');
+  return BrowserMultiFormatReader;
+}
+
 export default function Wallet() {
   const [cashuToken, setCashuToken] = useState('');
   const [lightningAddress, setLightningAddress] = useState('');
@@ -22,14 +28,13 @@ export default function Wallet() {
   const [scanning, setScanning] = useState(false);
   const [camError, setCamError] = useState(null);
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const jsQRRef = useRef(null);
+  const readerRef = useRef(null);
 
   // Image upload
   const fileInputRef = useRef(null);
   const [uploadError, setUploadError] = useState(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
 
   useEffect(() => {
     if (!cashuToken) { setParsedGiftCardId(null); return; }
@@ -39,79 +44,77 @@ export default function Wallet() {
     } catch { setParsedGiftCardId(null); }
   }, [cashuToken]);
 
-  async function loadJsQR() {
-    if (jsQRRef.current) return jsQRRef.current;
-    const mod = await import('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');
-    jsQRRef.current = mod.default || window.jsQR;
-    return jsQRRef.current;
-  }
-
   const stopCamera = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (readerRef.current) {
+      try { readerRef.current.reset(); } catch {}
+      readerRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
     setScanning(false);
   }, []);
 
   async function startCamera() {
-    setCamError(null); setScanning(true);
+    setCamError(null);
+    setScanning(true);
     try {
+      const BrowserMultiFormatReader = await loadZxing();
+      const reader = new BrowserMultiFormatReader();
+      readerRef.current = reader;
+
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); scanFrame(); }
-    } catch { setCamError('Cannot access camera. Please allow camera permission.'); setScanning(false); }
-  }
 
-  async function scanFrame() {
-    const video = videoRef.current, canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
-      rafRef.current = requestAnimationFrame(scanFrame); return;
-    }
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    try {
-      const jsQR = await loadJsQR();
-      if (jsQR) {
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
-        if (code?.data) { setCashuToken(code.data); stopCamera(); return; }
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+
+        reader.decodeFromVideoElement(videoRef.current, (result, err) => {
+          if (result) {
+            setCashuToken(result.getText());
+            stopCamera();
+          }
+        });
       }
-    } catch {}
-    rafRef.current = requestAnimationFrame(scanFrame);
+    } catch (e) {
+      setCamError('Cannot access camera. Please allow camera permission.');
+      setScanning(false);
+    }
   }
 
-  // Scan QR from uploaded image file
+  // Upload image and decode QR with zxing
   async function handleImageUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadError(null);
+    setUploadLoading(true);
 
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = async () => {
+    try {
+      const BrowserMultiFormatReader = await loadZxing();
+      const reader = new BrowserMultiFormatReader();
+
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.src = url;
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+
+      // Draw to canvas and decode
       const canvas = document.createElement('canvas');
       canvas.width = img.width;
       canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      canvas.getContext('2d').drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
-      try {
-        const jsQR = await loadJsQR();
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
-        if (code?.data) {
-          setCashuToken(code.data);
-        } else {
-          setUploadError('No QR code found in image. Try a clearer photo.');
-        }
-      } catch {
-        setUploadError('Failed to read image. Please try again.');
-      }
-    };
-    img.onerror = () => setUploadError('Could not load image.');
-    img.src = url;
-    // Reset input so same file can be re-uploaded
-    e.target.value = '';
+
+      const result = await reader.decodeFromCanvas(canvas);
+      setCashuToken(result.getText());
+    } catch {
+      setUploadError('No QR code found in image. Try uploading the gift card PNG directly.');
+    } finally {
+      setUploadLoading(false);
+      e.target.value = '';
+    }
   }
 
   useEffect(() => () => stopCamera(), [stopCamera]);
@@ -164,7 +167,6 @@ export default function Wallet() {
         {scanning ? (
           <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', aspectRatio: '1/1' }}>
             <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} playsInline muted />
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
             <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
               <div style={{ width: 200, height: 200, border: '2px solid #F7931A', borderRadius: 16, boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }} />
               <div style={{ marginTop: 16, fontFamily: 'var(--font-mono)', fontSize: 12, color: '#F7931A', background: 'rgba(0,0,0,0.6)', padding: '6px 14px', borderRadius: 20 }}>
@@ -176,25 +178,26 @@ export default function Wallet() {
             </button>
           </div>
         ) : (
-          <>
-            {/* Action buttons row */}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={startCamera} style={{ padding: '10px 14px', borderRadius: 10, background: '#1a1a1a', border: '1px solid #333', color: '#F7931A', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                📷 Scan
-              </button>
-              <button onClick={() => fileInputRef.current?.click()} style={{ padding: '10px 14px', borderRadius: 10, background: '#1a1a1a', border: '1px solid #333', color: '#F7931A', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                🖼️ Upload
-              </button>
-              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
-              <textarea
-                placeholder="or paste gift card code here..."
-                value={cashuToken}
-                onChange={e => setCashuToken(e.target.value)}
-                rows={2}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: 10, background: '#111', border: cashuToken ? '1px solid #F7931A55' : '1px solid #333', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
-              />
-            </div>
-          </>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={startCamera} style={{ padding: '10px 14px', borderRadius: 10, background: '#1a1a1a', border: '1px solid #333', color: '#F7931A', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              📷 Scan
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadLoading}
+              style={{ padding: '10px 14px', borderRadius: 10, background: '#1a1a1a', border: '1px solid #333', color: '#F7931A', fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {uploadLoading ? '⏳' : '🖼️ Upload'}
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
+            <textarea
+              placeholder="or paste gift card code here..."
+              value={cashuToken}
+              onChange={e => setCashuToken(e.target.value)}
+              rows={2}
+              style={{ flex: 1, padding: '10px 14px', borderRadius: 10, background: '#111', border: cashuToken ? '1px solid #F7931A55' : '1px solid #333', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
         )}
 
         {camError && (
