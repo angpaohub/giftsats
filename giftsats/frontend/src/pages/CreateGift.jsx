@@ -500,7 +500,7 @@ export default function CreateGift() {
                 )}
               </div>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', lineHeight: 1.7 }}>Scan QR or visit</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', lineHeight: 1.7 }}>To redeem, please visit</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: design.qrAccent, fontWeight: 700 }}>giftsats.pages.dev</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', lineHeight: 1.7 }}>Enter Lightning address to receive sats ⚡</div>
               </div>
