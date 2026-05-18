@@ -188,18 +188,22 @@ export default function Admin() {
   const [tab, setTab] = useState('overview');
   const [lastRefresh, setLastRefresh] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [channelBalance, setChannelBalance] = useState(null);
 
   async function fetchData() {
     setLoading(true);
     try {
-      const [statsRes, cardsRes] = await Promise.all([
+      const [statsRes, cardsRes, balanceRes] = await Promise.all([
         fetch(`${BACKEND}/api/stats`),
         fetch(`${BACKEND}/api/admin/cards`),
+        fetch(`${BACKEND}/api/channel-balance`),
       ]);
       const statsData = await statsRes.json();
       const cardsData = cardsRes.ok ? await cardsRes.json() : [];
+      const balanceData = balanceRes.ok ? await balanceRes.json() : null;
       setStats(statsData);
       setCards(Array.isArray(cardsData) ? cardsData : []);
+      setChannelBalance(balanceData);
       setLastRefresh(new Date());
     } catch (e) {
       console.error(e);
@@ -256,6 +260,46 @@ export default function Admin() {
         {/* OVERVIEW TAB */}
         {tab === 'overview' && (
           <>
+            {/* Node capacity banner */}
+            {channelBalance && (
+              <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: '20px 24px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+                <div>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: '#333', letterSpacing: 3, marginBottom: 8 }}>NODE CAPACITY — LIVE</div>
+                  <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#555', marginBottom: 4 }}>MAX MINTABLE NOW</div>
+                      <div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, color: '#39ff14' }}>{(channelBalance.remoteSats || 0).toLocaleString()}</div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginTop: 2 }}>sats inbound</div>
+                    </div>
+                    <div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#555', marginBottom: 4 }}>MAX REDEEMABLE NOW</div>
+                      <div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, color: '#F7931A' }}>{(channelBalance.localSats || 0).toLocaleString()}</div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginTop: 2 }}>sats outbound</div>
+                    </div>
+                  </div>
+                </div>
+                {/* Capacity bar */}
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginBottom: 8 }}>INBOUND / OUTBOUND RATIO</div>
+                  {(() => {
+                    const total = (channelBalance.remoteSats || 0) + (channelBalance.localSats || 0);
+                    const inPct = total > 0 ? Math.round((channelBalance.remoteSats / total) * 100) : 0;
+                    return (
+                      <div>
+                        <div style={{ height: 8, background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${inPct}%`, background: 'linear-gradient(90deg, #39ff14, #F7931A)', borderRadius: 4, transition: 'width 0.6s ease' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontFamily: mono, fontSize: 10, color: '#444' }}>
+                          <span style={{ color: '#39ff14' }}>IN {inPct}%</span>
+                          <span style={{ color: '#F7931A' }}>OUT {100 - inPct}%</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 40 }}>
               <StatCard label="Total Redeemed" value={stats?.redeemed_count ?? 0} sub="gift cards" accent="#39ff14" animate />
               <StatCard label="Sats Redeemed" value={stats?.redeemed_sats ?? 0} sub={`≈ $${(((parseInt(stats?.redeemed_sats) || 0) / 100_000_000) * 103000).toFixed(2)} USD`} accent="#F7931A" animate />
