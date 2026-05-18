@@ -51,7 +51,7 @@ const designs = [
 
 const SAT_PRESETS = [1000, 2100, 5000, 10000, 21000];
 const MIN_SATS = 1000;
-const EXCHANGE_RATE = 3500000;
+const BTC_USD_RATE = 103000; // approx, update periodically
 const FEE_PERCENT = 0.02;
 
 const labelStyle = {
@@ -63,8 +63,8 @@ const labelStyle = {
   marginBottom: 10,
 };
 
-function satsToTHB(sats) {
-  return ((sats / 100000000) * EXCHANGE_RATE).toFixed(2);
+function satsToUSD(sats) {
+  return ((sats / 100_000_000) * BTC_USD_RATE).toFixed(2);
 }
 
 async function drawQRWithLogo(canvas, tokenValue, logoSrc) {
@@ -116,6 +116,9 @@ export default function CreateGift() {
   const [customAmount, setCustomAmount] = useState('');
   const [senderNote, setSenderNote] = useState('');
   const [senderName, setSenderName] = useState('');
+  const [senderLightningAddress, setSenderLightningAddress] = useState('');
+  const [networkFee, setNetworkFee] = useState(2);
+  const [expiresAt, setExpiresAt] = useState(null);
   const [status, setStatus] = useState('preview');
   const [invoice, setInvoice] = useState(null);
   const [giftCard, setGiftCard] = useState(null);
@@ -132,7 +135,7 @@ export default function CreateGift() {
   const isReady = status === 'ready';
   const isPaying = status === 'pay';
   const feeSats = Math.ceil(amountSats * FEE_PERCENT);
-  const totalSats = amountSats + feeSats;
+  const totalSats = amountSats + feeSats + networkFee;
 
   useEffect(() => {
     if (!qrCanvasRef.current) return;
@@ -167,11 +170,13 @@ export default function CreateGift() {
       const res = await fetch(`${BACKEND}/api/gift/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountSats, senderNote, designId: design.id }),
+        body: JSON.stringify({ amountSats, senderNote, designId: design.id, senderLightningAddress: senderLightningAddress || undefined }),
       });
       const data = await res.json();
       if (data.paymentRequest) {
         setInvoice(data);
+        setNetworkFee(data.networkFee ?? 2);
+        setExpiresAt(data.expiresAt ?? null);
         setStatus('pay');
         startPolling(data.giftCardId);
       } else {
@@ -236,7 +241,7 @@ export default function CreateGift() {
           Create <span style={{ color: '#F7931A' }}>Gift Card</span>
         </h2>
         <p style={{ color: '#555', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 6, marginBottom: 0 }}>
-          Bitcoin gift cards powered by Cashu ⚡
+          Bitcoin gift cards powered by Lightning ⚡
         </p>
       </div>
 
@@ -313,6 +318,21 @@ export default function CreateGift() {
               />
             </div>
 
+            {/* Refund address (optional) */}
+            <div style={{ marginBottom: 24 }}>
+              <span style={labelStyle}>REFUND ADDRESS (OPTIONAL)</span>
+              <input
+                type="text"
+                placeholder="your@lightning.address — for refund if card expires"
+                value={senderLightningAddress}
+                onChange={e => setSenderLightningAddress(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, background: '#111', border: '1px solid #333', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none', boxSizing: 'border-box' }}
+              />
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', marginTop: 6 }}>
+                If not redeemed within 30 days, sats will be refunded here. Leave blank to forfeit to platform.
+              </div>
+            </div>
+
             <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '14px 16px', marginBottom: 20, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
                 <span>Gift amount</span><span style={{ color: '#aaa' }}>{amountSats.toLocaleString()} sats</span>
@@ -320,11 +340,14 @@ export default function CreateGift() {
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
                 <span>Service fee (2%)</span><span style={{ color: '#aaa' }}>{feeSats.toLocaleString()} sats</span>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                <span>Network fee</span><span style={{ color: '#aaa' }}>{networkFee} sats</span>
+              </div>
               <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: '#888' }}>Total to pay</span>
                 <span style={{ color: design.borderColor, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
               </div>
-              <div style={{ marginTop: 6, color: '#444', fontSize: 10 }}>≈ ฿{satsToTHB(totalSats)} THB</div>
+              <div style={{ marginTop: 6, color: '#444', fontSize: 10 }}>≈ ${satsToUSD(totalSats)} USD</div>
             </div>
 
             <button onClick={handleGenerate} disabled={amountSats < MIN_SATS} style={{
@@ -356,11 +379,26 @@ export default function CreateGift() {
               </div>
               <div style={{ background: '#111', border: '1px solid #222', borderRadius: 10, padding: '12px 16px', marginBottom: 14, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
-                  <span>You pay</span><span style={{ color: design.borderColor }}>{totalSats.toLocaleString()} sats</span>
+                  <span>Gift amount</span><span style={{ color: '#aaa' }}>{amountSats.toLocaleString()} sats</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                  <span>Service fee (2%)</span><span style={{ color: '#aaa' }}>{feeSats.toLocaleString()} sats</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                  <span>Network fee</span><span style={{ color: '#aaa' }}>{networkFee} sats</span>
+                </div>
+                <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ color: '#888' }}>You pay</span>
+                  <span style={{ color: design.borderColor, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
                   <span>Recipient gets</span><span style={{ color: '#39ff14' }}>{amountSats.toLocaleString()} sats</span>
                 </div>
+                {expiresAt && (
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #222', color: '#444', fontSize: 10 }}>
+                    ⏳ Card expires {new Date(expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </div>
+                )}
               </div>
               <button onClick={() => { navigator.clipboard.writeText(invoice.paymentRequest); showToast('Copied!'); }} style={{
                 width: '100%', padding: '12px', borderRadius: 10,
@@ -449,7 +487,7 @@ export default function CreateGift() {
               alignItems: 'center', padding: '24px 20px 20px', gap: 12,
             }}>
               <div style={{ width: '60%', borderTop: `1px dashed ${design.qrAccent}33` }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.qrAccent, letterSpacing: 2 }}>CASHU REDEEM QR</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.qrAccent, letterSpacing: 2 }}>LIGHTNING REDEEM QR</span>
               <div style={{ position: 'relative' }}>
                 <div style={{ background: '#fff', padding: 10, borderRadius: 10, filter: isReady ? 'none' : 'blur(7px)', transition: 'filter 0.6s ease' }}>
                   <canvas ref={qrCanvasRef} width={160} height={160} style={{ display: 'block', borderRadius: 4 }} />
@@ -467,8 +505,13 @@ export default function CreateGift() {
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', lineHeight: 1.7 }}>Enter Lightning address to receive sats ⚡</div>
               </div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#333', letterSpacing: 1, borderTop: `1px solid ${design.qrBorder}`, paddingTop: 10, width: '100%', textAlign: 'center' }}>
-                {isReady && giftCard?.id ? giftCard.id : 'POWERED BY BITCOIN ⚡ CASHU'}
+                {isReady && giftCard?.id ? giftCard.id : 'POWERED BY BITCOIN ⚡ LIGHTNING'}
               </div>
+              {expiresAt && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#555', marginTop: 4, textAlign: 'center', letterSpacing: 1 }}>
+                  REDEEM BY {new Date(expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}
+                </div>
+              )}
             </div>
           </div>
           <div style={{ marginTop: 12, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#444', textAlign: 'center' }}>
