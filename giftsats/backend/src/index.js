@@ -39,6 +39,16 @@ app.get('/api/admin/cards', async (req, res) => {
 // ── Designs ─────────────────────────────────────────────
 app.get('/api/designs', (req, res) => res.json(listDesigns()));
 
+// ── Channel balance (for admin) ─────────────────────────
+app.get('/api/channel-balance', async (req, res) => {
+  try {
+    const balance = await getChannelBalance();
+    res.json(balance);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Create gift card ────────────────────────────────────
 app.post('/api/gift/create', async (req, res) => {
   try {
