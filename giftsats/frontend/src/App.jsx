@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import CreateGift from './pages/CreateGift.jsx';
 import Wallet from './pages/Wallet.jsx';
-import HowToRedeem from './pages/HowToRedeem.jsx';
+import HowItWorks from './pages/HowItWorks.jsx';
 import Admin from './pages/Admin.jsx';
 
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
-  { id: 'wallet', label: '💼 Your Wallet' },
-  { id: 'redeem', label: '📖 How to Redeem' },
+  { id: 'wallet', label: '💼 Redeem' },
+  { id: 'howto', label: '📖 How It Works' },
 ];
 
 const isAdmin = window.location.pathname === '/admin';
@@ -34,7 +34,6 @@ export default function App() {
             <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, letterSpacing: '-0.5px' }}>
               Gift<span style={{ color: '#F7931A' }}>Sats</span>
             </span>
-        
           </div>
           <div style={{ display: 'flex', gap: 0 }}>
             {tabs.map(tab => (
@@ -53,10 +52,10 @@ export default function App() {
       <main style={{ flex: 1, maxWidth: 900, margin: '0 auto', width: '100%', padding: '32px 24px' }}>
         {activeTab === 'create' && <CreateGift />}
         {activeTab === 'wallet' && <Wallet />}
-        {activeTab === 'redeem' && <HowToRedeem />}
+        {activeTab === 'howto' && <HowItWorks />}
       </main>
       <footer style={{ padding: '16px 24px', textAlign: 'center', color: '#333', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-        giftsats • powered by Lightning & Cashu • not your keys, not your coins
+        giftsats • powered by Lightning • not your keys, not your coins
       </footer>
     </div>
   );
