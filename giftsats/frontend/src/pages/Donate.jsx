@@ -67,9 +67,9 @@ export default function Donate() {
           WHERE YOUR SATS GO
         </div>
         {[
-          { icon: '⚡', label: 'Lightning Node', desc: 'Server & infrastructure costs to keep the node running 24/7' },
+          { icon: '⚡', label: 'Lightning Node', desc: 'Server & infrastructure costs to keep the node running 24/7 and to support node liquidity' },
           { icon: '🖥️', label: 'Hosting', desc: 'Backend on Railway, frontend on Cloudflare' },
-          { icon: '🛠️', label: 'Development', desc: 'Building new features and keeping the platform free' },
+          { icon: '🛠️', label: 'Development', desc: 'Building new features and scaling the platform to support more users' },
         ].map(({ icon, label, desc }) => (
           <div key={label} style={{ display: 'flex', gap: 14, marginBottom: 16, alignItems: 'flex-start' }}>
             <div style={{ fontSize: 20, minWidth: 28, marginTop: 2 }}>{icon}</div>
