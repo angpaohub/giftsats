@@ -1,9 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv'; 
+import dotenv from 'dotenv';
 import multer from 'multer';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createInvoice, checkPayment, payLightningAddress, getChannelBalance } from './lnd.js';
 import {
   initDB, createGiftCard, getGiftCard, updateGiftCard, getStats,
@@ -17,20 +18,33 @@ const app = express();
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
 
-// ── Static: serve uploaded design images ────────────────
-app.use('/uploads', express.static('uploads'));
-
-// ── Multer: image upload config ──────────────────────────
-const storage = multer.diskStorage({
-  destination: 'uploads/designs/',
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${randomUUID()}${ext}`);
+// ── R2 client ────────────────────────────────────────────
+const r2 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
   },
 });
+
+const R2_BUCKET = process.env.R2_BUCKET || 'giftsats-designs';
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || process.env.R2_ENDPOINT;
+
+async function uploadToR2(buffer, filename, mimetype) {
+  await r2.send(new PutObjectCommand({
+    Bucket: R2_BUCKET,
+    Key: `designs/${filename}`,
+    Body: buffer,
+    ContentType: mimetype,
+  }));
+  return `${R2_PUBLIC_URL}/${filename}`;
+}
+
+// ── Multer: memory storage (buffer → R2) ─────────────────
 const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.png', '.jpg', '.jpeg', '.webp'];
     const ext = path.extname(file.originalname).toLowerCase();
@@ -145,7 +159,9 @@ app.post('/api/designs', upload.single('image'), async (req, res) => {
     }
 
     const price = Math.max(0, parseInt(priceSats) || 0);
-    const imageUrl = `/uploads/designs/${req.file.filename}`;
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const filename = `${randomUUID()}${ext}`;
+    const imageUrl = await uploadToR2(req.file.buffer, filename, req.file.mimetype);
 
     const design = await createDesign({
       name,
@@ -369,7 +385,7 @@ async function processExpiredCards() {
           redeemedTo: card.senderLightningAddress,
           redeemedAt: new Date().toISOString(),
         });
-        console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress}`); 
+        console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress}`);
       } else {
         await updateGiftCard(card.id, { refundStatus: 'forfeited' });
         console.log(`[expiry] Forfeited ${card.amountSats} sats (card ${card.id})`);
