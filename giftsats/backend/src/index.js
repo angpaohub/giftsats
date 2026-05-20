@@ -38,7 +38,7 @@ async function uploadToR2(buffer, filename, mimetype) {
     Body: buffer,
     ContentType: mimetype,
   }));
-  return `${R2_PUBLIC_URL}/${filename}`;
+  return `${R2_PUBLIC_URL}/designs/${filename}`;
 }
 
 // ── Multer: memory storage (buffer → R2) ─────────────────
