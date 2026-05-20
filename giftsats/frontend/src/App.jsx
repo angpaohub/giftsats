@@ -4,20 +4,28 @@ import Wallet from './pages/Wallet.jsx';
 import HowItWorks from './pages/HowItWorks.jsx';
 import Donate from './pages/Donate.jsx';
 import Admin from './pages/Admin.jsx';
+import Explore from './pages/Explore.jsx';
+import DesignSubmit from './pages/DesignSubmit.jsx';
 
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
   { id: 'wallet', label: '💼 Redeem' },
+  { id: 'explore', label: '🎨 Explore Designs' },
   { id: 'howto', label: '📖 How It Works' },
   { id: 'support', label: '🧡 Support Us' },
 ];
 
-const isAdmin = window.location.pathname === '/admin';
+const path = window.location.pathname;
+const isAdmin = path === '/admin';
+const isExplore = path === '/explore';
+const isDesign = path === '/design';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('create');
 
   if (isAdmin) return <Admin />;
+  if (isExplore) return <Explore />;
+  if (isDesign) return <DesignSubmit />;
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -56,6 +64,7 @@ export default function App() {
         {activeTab === 'wallet' && <Wallet />}
         {activeTab === 'howto' && <HowItWorks />}
         {activeTab === 'support' && <Donate />}
+        {activeTab === 'explore' && <Explore />}
       </main>
       <footer style={{ padding: '16px 24px', textAlign: 'center', color: '#333', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
         giftsats • powered by Lightning • not your keys, not your coins
