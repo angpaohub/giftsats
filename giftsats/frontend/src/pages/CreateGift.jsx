@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import QRCode from 'qrcode';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001';
@@ -125,6 +125,11 @@ export default function CreateGift() {
   const [countdown, setCountdown] = useState(600);
   const [toast, setToast] = useState(null);
 
+  const [designCode, setDesignCode] = useState('');
+  const [designPreview, setDesignPreview] = useState(null);
+  const [designLoading, setDesignLoading] = useState(false);
+  const [designError, setDesignError] = useState('');
+
   const cardRef = useRef(null);
   const qrCanvasRef = useRef(null);
   const timerRef = useRef(null);
@@ -135,7 +140,8 @@ export default function CreateGift() {
   const isReady = status === 'ready';
   const isPaying = status === 'pay';
   const feeSats = Math.ceil(amountSats * FEE_PERCENT);
-  const totalSats = amountSats + feeSats + networkFee;
+  const designFee = designPreview?.priceSats || 0;
+  const totalSats = amountSats + feeSats + networkFee + designFee;
 
   useEffect(() => {
     if (!qrCanvasRef.current) return;
@@ -170,7 +176,7 @@ export default function CreateGift() {
       const res = await fetch(`${BACKEND}/api/gift/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountSats, senderNote, designId: design.id, senderLightningAddress: senderLightningAddress || undefined }),
+        body: JSON.stringify({ amountSats, senderNote, designCode: designCode.trim() || undefined, senderLightningAddress: senderLightningAddress || undefined }),
       });
       const data = await res.json();
       if (data.paymentRequest) {
@@ -207,6 +213,27 @@ export default function CreateGift() {
     clearInterval(pollRef.current);
     clearInterval(timerRef.current);
   }, []);
+
+  useEffect(() => {
+    const code = designCode.trim();
+    if (!code) { setDesignPreview(null); setDesignError(''); return; }
+    const timer = setTimeout(async () => {
+      setDesignLoading(true);
+      setDesignError('');
+      try {
+        const res = await fetch(`${BACKEND}/api/designs/${code}`);
+        if (!res.ok) throw new Error('not found');
+        const data = await res.json();
+        setDesignPreview(data);
+      } catch {
+        setDesignPreview(null);
+        setDesignError('Design code not found');
+      } finally {
+        setDesignLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [designCode]);
 
   async function handleDownloadPNG() {
     if (!cardRef.current) return;
@@ -272,6 +299,65 @@ export default function CreateGift() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Design Code from Marketplace */}
+            <div style={{ marginBottom: 24 }}>
+              <span style={labelStyle}>MARKETPLACE DESIGN CODE (OPTIONAL)</span>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  placeholder="e.g. gfts-a3x9k — paste code from Explore"
+                  value={designCode}
+                  onChange={e => setDesignCode(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 40px 10px 14px',
+                    borderRadius: 8, background: '#111',
+                    border: `1px solid ${designError ? '#ff6b6b' : designPreview ? '#39ff14' : '#333'}`,
+                    color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12,
+                    outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.2s',
+                  }}
+                />
+                <div style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14 }}>
+                  {designLoading ? '⏳' : designPreview ? '✓' : designError ? '✕' : ''}
+                </div>
+              </div>
+              {designError && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#ff6b6b', marginTop: 6 }}>{designError}</div>
+              )}
+              {!designPreview && !designError && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#333', marginTop: 6 }}>
+                  Browse designs at{' '}
+                  <a href="/explore" style={{ color: '#F7931A', textDecoration: 'none' }}>giftsats.com/explore</a>
+                </div>
+              )}
+              {/* Design preview card */}
+              {designPreview && (
+                <div style={{
+                  marginTop: 10, background: '#0d0d0d', border: '1px solid #1e1e1e',
+                  borderRadius: 10, overflow: 'hidden', display: 'flex',
+                }}>
+                  {designPreview.imageUrl && (
+                    <img
+                      src={`${BACKEND}${designPreview.imageUrl}`}
+                      alt={designPreview.name}
+                      style={{ width: 100, objectFit: 'cover', flexShrink: 0 }}
+                    />
+                  )}
+                  <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, color: '#f0ece4' }}>{designPreview.name}</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555' }}>by {designPreview.designerName}</div>
+                    {designPreview.priceSats === 0
+                      ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#39ff14' }}>Free</div>
+                      : <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#F7931A' }}>+{designPreview.priceSats.toLocaleString()} sats design fee</div>
+                    }
+                  </div>
+                  <button
+                    onClick={() => { setDesignCode(''); setDesignPreview(null); }}
+                    style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#333', cursor: 'pointer', padding: '0 14px', fontSize: 16 }}
+                  >✕</button>
+                </div>
+              )}
             </div>
 
             <div style={{ marginBottom: 24 }}>
@@ -343,6 +429,11 @@ export default function CreateGift() {
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
                 <span>Network fee</span><span style={{ color: '#aaa' }}>{networkFee} sats</span>
               </div>
+              {designFee > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                  <span>Design fee ({designPreview?.name})</span><span style={{ color: '#aaa' }}>{designFee.toLocaleString()} sats</span>
+                </div>
+              )}
               <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: '#888' }}>Total to pay</span>
                 <span style={{ color: design.borderColor, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
@@ -387,6 +478,11 @@ export default function CreateGift() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
                   <span>Network fee</span><span style={{ color: '#aaa' }}>{networkFee} sats</span>
                 </div>
+                {designFee > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', marginBottom: 6 }}>
+                    <span>Design fee ({designPreview?.name})</span><span style={{ color: '#aaa' }}>{designFee.toLocaleString()} sats</span>
+                  </div>
+                )}
                 <div style={{ borderTop: '1px solid #222', paddingTop: 8, display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                   <span style={{ color: '#888' }}>You pay</span>
                   <span style={{ color: design.borderColor, fontWeight: 700 }}>{totalSats.toLocaleString()} sats</span>
