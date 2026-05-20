@@ -229,7 +229,7 @@ function dbRowToDesign(row) {
     imageUrl:         row.image_url,
     description:      row.description,
     active:           row.active,
-    useCount:         row.use_count,
+    useCount:         row.use_count, 
     createdAt:        row.created_at,
   };
 }
