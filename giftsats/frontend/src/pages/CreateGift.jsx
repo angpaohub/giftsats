@@ -339,7 +339,7 @@ export default function CreateGift() {
                 }}>
                   {designPreview.imageUrl && (
                     <img
-                      src={`${BACKEND}${designPreview.imageUrl}`}
+                      src={designPreview.imageUrl}
                       alt={designPreview.name}
                       style={{ width: 100, objectFit: 'cover', flexShrink: 0 }}
                     />
