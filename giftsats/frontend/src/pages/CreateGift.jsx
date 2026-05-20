@@ -550,28 +550,42 @@ export default function CreateGift() {
           }}>
             {/* TOP */}
             <div style={{
-              background: design.bg,
+              background: designPreview?.imageUrl ? 'transparent' : design.bg,
               padding: '28px 24px 24px',
               display: 'flex', flexDirection: 'column',
               justifyContent: 'space-between',
               minHeight: 220, position: 'relative', overflow: 'hidden',
             }}>
-              <div style={{ position: 'absolute', inset: 0, backgroundImage: `radial-gradient(circle, ${design.patternColor} 1.5px, transparent 1.5px)`, backgroundSize: '20px 20px', pointerEvents: 'none' }} />
+              {/* Marketplace design image background */}
+              {designPreview?.imageUrl && (
+                <img
+                  src={`${BACKEND}${designPreview.imageUrl}`}
+                  alt={designPreview.name}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
+                />
+              )}
+              {/* Dark overlay for readability when using image */}
+              {designPreview?.imageUrl && (
+                <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.55) 100%)', pointerEvents: 'none' }} />
+              )}
+              {!designPreview?.imageUrl && (
+                <div style={{ position: 'absolute', inset: 0, backgroundImage: `radial-gradient(circle, ${design.patternColor} 1.5px, transparent 1.5px)`, backgroundSize: '20px 20px', pointerEvents: 'none' }} />
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', position: 'relative' }}>
                 <div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.accentAlt, letterSpacing: 3, marginBottom: 4 }}>GIFT SATS</div>
-                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, color: design.accent }}>{design.name}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: designPreview?.imageUrl ? 'rgba(255,255,255,0.7)' : design.accentAlt, letterSpacing: 3, marginBottom: 4 }}>GIFT SATS</div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, color: '#fff' }}>{designPreview ? designPreview.name : design.name}</div>
                 </div>
-                <div style={{ fontSize: 28 }}>{design.emoji}</div>
+                <div style={{ fontSize: 28 }}>{designPreview?.imageUrl ? '🎨' : design.emoji}</div>
               </div>
               <div style={{ position: 'relative', padding: '16px 0' }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 48, fontWeight: 800, color: design.accent, lineHeight: 1 }}>{amountSats.toLocaleString()}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: design.accentAlt, marginTop: 4, letterSpacing: 2 }}>sats</div>
-                {senderNote && <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: design.accentAlt, marginTop: 10, fontStyle: 'italic' }}>"{senderNote.slice(0, 50)}"</div>}
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 48, fontWeight: 800, color: '#fff', lineHeight: 1 }}>{amountSats.toLocaleString()}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: designPreview?.imageUrl ? 'rgba(255,255,255,0.7)' : design.accentAlt, marginTop: 4, letterSpacing: 2 }}>sats</div>
+                {senderNote && <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 10, fontStyle: 'italic' }}>"{senderNote.slice(0, 50)}"</div>}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', position: 'relative' }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.accentAlt }}>{senderName ? `from ${senderName}` : 'by GiftSats'}</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isReady ? '#39ff14' : design.accentAlt }}>{isReady ? '✓ READY TO SEND' : isPaying ? '⏳ AWAITING PAYMENT' : 'PREVIEW'}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.6)' }}>{senderName ? `from ${senderName}` : 'by GiftSats'}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isReady ? '#39ff14' : 'rgba(255,255,255,0.6)' }}>{isReady ? '✓ READY TO SEND' : isPaying ? '⏳ AWAITING PAYMENT' : 'PREVIEW'}</div>
               </div>
             </div>
 
