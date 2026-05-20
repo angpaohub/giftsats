@@ -189,21 +189,25 @@ export default function Admin() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [filter, setFilter] = useState('all');
   const [channelBalance, setChannelBalance] = useState(null);
+  const [r2Stats, setR2Stats] = useState(null);
 
   async function fetchData() {
     setLoading(true);
     try {
-      const [statsRes, cardsRes, balanceRes] = await Promise.all([
+      const [statsRes, cardsRes, balanceRes, r2Res] = await Promise.all([
         fetch(`${BACKEND}/api/stats`),
         fetch(`${BACKEND}/api/admin/cards`),
         fetch(`${BACKEND}/api/channel-balance`),
+        fetch(`${BACKEND}/api/admin/r2-stats`),
       ]);
       const statsData = await statsRes.json();
       const cardsData = cardsRes.ok ? await cardsRes.json() : [];
       const balanceData = balanceRes.ok ? await balanceRes.json() : null;
+      const r2Data = r2Res.ok ? await r2Res.json() : null;
       setStats(statsData);
       setCards(Array.isArray(cardsData) ? cardsData : []);
       setChannelBalance(balanceData);
+      setR2Stats(r2Data);
       setLastRefresh(new Date());
     } catch (e) {
       console.error(e);
@@ -254,7 +258,7 @@ export default function Admin() {
           <NavTab label="Overview" active={tab === 'overview'} onClick={() => setTab('overview')} />
           <NavTab label="Cards" active={tab === 'cards'} onClick={() => setTab('cards')} badge={cards.length} />
           <NavTab label="Expiry" active={tab === 'expiry'} onClick={() => setTab('expiry')} badge={expiredCount > 0 ? expiredCount : expiringCount > 0 ? `${expiringCount}⚠` : null} />
-          <NavTab label="Marketplace" active={tab === 'marketplace'} onClick={() => setTab('marketplace')} badge="soon" />
+          <NavTab label="Marketplace" active={tab === 'marketplace'} onClick={() => setTab('marketplace')} />
         </div>
 
         {/* OVERVIEW TAB */}
@@ -292,6 +296,50 @@ export default function Admin() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontFamily: mono, fontSize: 10, color: '#444' }}>
                           <span style={{ color: '#39ff14' }}>IN {inPct}%</span>
                           <span style={{ color: '#F7931A' }}>OUT {100 - inPct}%</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* R2 Storage banner */}
+            {r2Stats && (
+              <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: '20px 24px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+                <div>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: '#333', letterSpacing: 3, marginBottom: 8 }}>R2 STORAGE — DESIGNS</div>
+                  <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#555', marginBottom: 4 }}>USED</div>
+                      <div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, color: '#a78bfa' }}>{r2Stats.usedGB.toFixed(3)}</div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginTop: 2 }}>GB</div>
+                    </div>
+                    <div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#555', marginBottom: 4 }}>FREE REMAINING</div>
+                      <div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, color: '#39ff14' }}>{(10 - r2Stats.usedGB).toFixed(3)}</div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginTop: 2 }}>GB of 10 GB</div>
+                    </div>
+                    <div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#555', marginBottom: 4 }}>FILES</div>
+                      <div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, color: '#F7931A' }}>{r2Stats.objectCount}</div>
+                      <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginTop: 2 }}>design images</div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: '#333', marginBottom: 8 }}>STORAGE USAGE</div>
+                  {(() => {
+                    const pct = Math.min((r2Stats.usedGB / 10) * 100, 100);
+                    const color = pct > 80 ? '#ff4444' : pct > 50 ? '#F7931A' : '#39ff14';
+                    return (
+                      <div>
+                        <div style={{ height: 8, background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 4, transition: 'width 0.6s ease' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontFamily: mono, fontSize: 10, color: '#444' }}>
+                          <span style={{ color }}>{pct.toFixed(1)}% used</span>
+                          <span>10 GB free tier</span>
                         </div>
                       </div>
                     );
@@ -447,13 +495,108 @@ export default function Admin() {
 
         {/* MARKETPLACE TAB */}
         {tab === 'marketplace' && (
-          <div style={{ border: '1px dashed #1a1a1a', borderRadius: 12, padding: '80px 40px', textAlign: 'center' }}>
-            <div style={{ fontSize: 40, marginBottom: 16 }}>🛍️</div>
-            <div style={{ fontFamily: display, fontSize: 24, fontWeight: 800, color: '#222', marginBottom: 8 }}>Marketplace Coming Soon</div>
-            <div style={{ fontFamily: mono, fontSize: 11, color: '#2a2a2a', letterSpacing: 1 }}>DESIGNER STATS, REVENUE SPLITS, AND LISTINGS WILL APPEAR HERE</div>
-          </div>
+          <DesignsTab BACKEND={BACKEND} mono={mono} display={display} />
         )}
       </div>
+    </div>
+  );
+}
+
+function DesignsTab({ BACKEND, mono, display }) {
+  const [designs, setDesigns] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND}/api/admin/designs`);
+      const data = await res.json();
+      setDesigns(Array.isArray(data) ? data : []);
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function takedown(id, name) {
+    if (!confirm(`Take down "${name}"? It will be hidden from the marketplace.`)) return;
+    await fetch(`${BACKEND}/api/admin/designs/${id}/takedown`, { method: 'PATCH' });
+    load();
+  }
+
+  async function restore(id) {
+    await fetch(`${BACKEND}/api/admin/designs/${id}/restore`, { method: 'PATCH' });
+    load();
+  }
+
+  const active = designs.filter(d => d.active);
+  const hidden = designs.filter(d => !d.active);
+
+  const thumb = (d) => (
+    <div style={{ width: 90, height: 56, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: '#1a1a1a' }}>
+      {d.imageUrl
+        ? <img src={d.imageUrl} alt={d.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>🎨</div>
+      }
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+        <div>
+          <div style={{ fontFamily: display, fontSize: 20, fontWeight: 700, color: '#fff' }}>Marketplace Designs</div>
+          <div style={{ fontFamily: mono, fontSize: 11, color: '#444', marginTop: 4, letterSpacing: 1 }}>
+            {active.length} ACTIVE · {hidden.length} HIDDEN
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <a href="/explore" target="_blank" style={{ fontFamily: mono, fontSize: 11, color: '#F7931A', textDecoration: 'none', border: '1px solid #F7931A33', padding: '8px 16px', borderRadius: 6, letterSpacing: 1 }}>VIEW MARKETPLACE ↗</a>
+          <a href="/design" target="_blank" style={{ fontFamily: mono, fontSize: 11, color: '#888', textDecoration: 'none', border: '1px solid #2a2a2a', padding: '8px 16px', borderRadius: 6, letterSpacing: 1 }}>SUBMIT DESIGN ↗</a>
+        </div>
+      </div>
+
+      {loading && <div style={{ fontFamily: mono, fontSize: 12, color: '#333', padding: '40px', textAlign: 'center' }}>LOADING...</div>}
+
+      {!loading && designs.length === 0 && (
+        <div style={{ fontFamily: mono, fontSize: 12, color: '#2a2a2a', padding: '80px 40px', textAlign: 'center', border: '1px dashed #1a1a1a', borderRadius: 12 }}>NO DESIGNS SUBMITTED YET</div>
+      )}
+
+      {!loading && active.map(d => (
+        <div key={d.id} style={{ display: 'flex', gap: 16, alignItems: 'center', background: '#111', border: '1px solid #1e1e1e', borderRadius: 8, padding: '12px 16px', marginBottom: 10 }}>
+          {thumb(d)}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: display, fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 3 }}>{d.name}</div>
+            <div style={{ fontFamily: mono, fontSize: 11, color: '#555', marginBottom: 3 }}>by {d.designerName} · <span style={{ color: '#F7931A' }}>{d.id}</span></div>
+            <div style={{ fontFamily: mono, fontSize: 10, color: '#444' }}>
+              {d.priceSats === 0 ? 'Free' : `${d.priceSats.toLocaleString()} sats/use`} · {d.useCount} uses · <span style={{ color: '#39ff1460' }}>{d.lightningAddress}</span>
+            </div>
+          </div>
+          <button onClick={() => takedown(d.id, d.name)} style={{ padding: '7px 14px', background: 'transparent', border: '1px solid #ef444433', borderRadius: 6, color: '#ef4444', fontFamily: mono, fontSize: 10, letterSpacing: 1, cursor: 'pointer', flexShrink: 0 }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = '#ef4444'}
+            onMouseLeave={e => e.currentTarget.style.borderColor = '#ef444433'}
+          >TAKE DOWN</button>
+        </div>
+      ))}
+
+      {!loading && hidden.length > 0 && (
+        <>
+          <div style={{ fontFamily: mono, fontSize: 10, color: '#2a2a2a', letterSpacing: 3, margin: '28px 0 14px' }}>HIDDEN DESIGNS</div>
+          {hidden.map(d => (
+            <div key={d.id} style={{ display: 'flex', gap: 16, alignItems: 'center', background: '#0d0d0d', border: '1px solid #141414', borderRadius: 8, padding: '12px 16px', marginBottom: 10, opacity: 0.55 }}>
+              {thumb(d)}
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: display, fontSize: 14, fontWeight: 700, color: '#555', marginBottom: 3 }}>{d.name}</div>
+                <div style={{ fontFamily: mono, fontSize: 11, color: '#333' }}>by {d.designerName} · <span style={{ color: '#444' }}>{d.id}</span></div>
+              </div>
+              <button onClick={() => restore(d.id)} style={{ padding: '7px 14px', background: 'transparent', border: '1px solid #4ade8033', borderRadius: 6, color: '#4ade80', fontFamily: mono, fontSize: 10, letterSpacing: 1, cursor: 'pointer', flexShrink: 0 }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = '#4ade80'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = '#4ade8033'}
+              >RESTORE</button>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
