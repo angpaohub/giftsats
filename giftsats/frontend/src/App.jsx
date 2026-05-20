@@ -2,7 +2,7 @@ import { useState } from 'react';
 import CreateGift from './pages/CreateGift.jsx';
 import Wallet from './pages/Wallet.jsx';
 import HowItWorks from './pages/HowItWorks.jsx';
-import Donate from './pages/Donate.jsx';
+import Donate from './pages/Donate.jsx'; 
 import Admin from './pages/Admin.jsx';
 import Explore from './pages/Explore.jsx';
 import DesignSubmit from './pages/DesignSubmit.jsx';
