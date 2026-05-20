@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -285,7 +284,7 @@ const css = `
 `;
 
 export default function Explore() {
-  const navigate = useNavigate();
+  const navigate = (path) => { window.location.href = path; };
   const [designs, setDesigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(null);
