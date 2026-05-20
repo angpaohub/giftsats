@@ -70,6 +70,35 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// ── Admin: R2 storage stats ─────────────────────────────
+app.get('/api/admin/r2-stats', async (req, res) => {
+  try {
+    const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+    let totalSize = 0;
+    let objectCount = 0;
+    let continuationToken = undefined;
+
+    do {
+      const cmd = new ListObjectsV2Command({
+        Bucket: R2_BUCKET,
+        Prefix: 'designs/',
+        ContinuationToken: continuationToken,
+      });
+      const result = await r2.send(cmd);
+      for (const obj of (result.Contents || [])) {
+        totalSize += obj.Size || 0;
+        objectCount++;
+      }
+      continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    const usedGB = totalSize / (1024 * 1024 * 1024);
+    res.json({ usedGB, objectCount, usedBytes: totalSize });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Admin: list all cards ───────────────────────────────
 app.get('/api/admin/cards', async (req, res) => {
   try {
