@@ -363,7 +363,7 @@ export default function Explore() {
             <div key={d.id} className="design-card" onClick={() => navigate(`/create?design=${d.id}`)}>
               <div className="design-img-wrap">
                 {d.imageUrl
-                  ? <img className="design-img" src={`${API}${d.imageUrl}`} alt={d.name} />
+                  ? <img className="design-img" src={d.imageUrl} alt={d.name} />
                   : <div className="design-img-placeholder">🎨</div>
                 }
                 <div className="design-overlay">
