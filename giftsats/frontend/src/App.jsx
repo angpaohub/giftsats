@@ -10,9 +10,9 @@ import DesignSubmit from './pages/DesignSubmit.jsx';
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
   { id: 'wallet', label: '💼 Redeem' },
-  { id: 'explore', label: '🎨 Explore Designs' },
   { id: 'howto', label: '📖 How It Works' },
   { id: 'support', label: '🧡 Support Us' },
+  { id: 'explore', label: '🎨 Explore Designs' },
 ];
 
 const path = window.location.pathname;
