@@ -369,7 +369,7 @@ async function processExpiredCards() {
           redeemedTo: card.senderLightningAddress,
           redeemedAt: new Date().toISOString(),
         });
-        console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress}`);
+        console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress}`); 
       } else {
         await updateGiftCard(card.id, { refundStatus: 'forfeited' });
         console.log(`[expiry] Forfeited ${card.amountSats} sats (card ${card.id})`);
