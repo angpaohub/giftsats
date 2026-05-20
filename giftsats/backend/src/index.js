@@ -312,12 +312,21 @@ app.get('/api/gift/:id', async (req, res) => {
           const design = await getDesignByCode(giftCard.designId);
           if (design?.lightningAddress) {
             const designerPayout = Math.floor(giftCard.designFee * (1 - DESIGNER_PLATFORM_CUT));
+            const platformDesignCut = giftCard.designFee - designerPayout;
+
             payLightningAddress(design.lightningAddress, designerPayout)
               .then(() => {
                 console.log(`[design-fee] Paid ${designerPayout} sats → ${design.lightningAddress}`);
                 incrementDesignUseCount(giftCard.designId).catch(() => {});
               })
               .catch(e => console.error('designer fee error (non-fatal):', e.message));
+
+            // ── Platform 20% cut → platform wallet ────
+            if (process.env.PLATFORM_WALLET && platformDesignCut > 0) {
+              payLightningAddress(process.env.PLATFORM_WALLET, platformDesignCut)
+                .then(() => console.log(`[design-cut] Paid ${platformDesignCut} sats → platform`))
+                .catch(e => console.error('platform design cut error (non-fatal):', e.message));
+            }
           }
         } else if (giftCard.designId) {
           // Still increment use count for free designs
