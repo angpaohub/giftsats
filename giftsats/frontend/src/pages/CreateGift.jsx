@@ -559,7 +559,7 @@ export default function CreateGift() {
               {/* Marketplace design image background */}
               {designPreview?.imageUrl && (
                 <img
-                  src={`${BACKEND}${designPreview.imageUrl}`}
+                  src={designPreview.imageUrl}
                   alt={designPreview.name}
                   style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
                 />
