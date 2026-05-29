@@ -93,8 +93,12 @@ export default function CardPage() {
 
   useEffect(() => {
     if (!card?.cashuToken || !qrCanvasRef.current) return;
-    drawQRWithLogo(qrCanvasRef.current, card.cashuToken, LOGO_URL);
-  }, [card]);
+    // Small delay to ensure canvas is visible after designData sets background
+    const timer = setTimeout(() => {
+      drawQRWithLogo(qrCanvasRef.current, card.cashuToken, LOGO_URL);
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [card, designData]);
 
   async function handleRedeem() {
     if (!lightningAddress || !card?.cashuToken) return;
@@ -152,10 +156,10 @@ export default function CardPage() {
     <div style={{ minHeight: '100vh', background: '#0a0a0a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px 16px' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32 }}>
+      <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32, textDecoration: 'none' }}>
         <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #F7931A, #FF6B35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>₿</div>
         <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18 }}>Gift<span style={{ color: '#F7931A' }}>Sats</span></span>
-      </div>
+      </a>
 
       <div style={{ width: '100%', maxWidth: 360 }}>
 
