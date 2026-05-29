@@ -434,6 +434,48 @@ async function processExpiredCards() {
   }
 }
 
+// ── OG preview for /card/:id (for crawlers) ──────────────
+app.get('/card/:id', async (req, res) => {
+  try {
+    const card = await getGiftCard(req.params.id);
+    const frontendUrl = process.env.FRONTEND_URL || 'https://giftsats.org';
+    const cardUrl = `${frontendUrl}/card/${req.params.id}`;
+
+    if (!card) {
+      return res.redirect(302, cardUrl);
+    }
+
+    const sats = card.amountSats.toLocaleString('en-US');
+    const title = `🎁 ${sats} sats Gift Card`;
+    const description = card.senderNote
+      ? `"${card.senderNote}" — Redeem your Bitcoin gift card at giftsats.org`
+      : `You received a Bitcoin gift card worth ${sats} sats. Redeem instantly with any Lightning address.`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
+  <meta property="og:title" content="${title}" />
+  <meta property="og:description" content="${description}" />
+  <meta property="og:url" content="${cardUrl}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="${frontendUrl}/og-card.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${title}" />
+  <meta name="twitter:description" content="${description}" />
+  <meta http-equiv="refresh" content="0; url=${cardUrl}" />
+</head>
+<body>
+  <script>window.location.href = "${cardUrl}";</script>
+</body>
+</html>`);
+  } catch (e) {
+    res.redirect(302, `${process.env.FRONTEND_URL || 'https://giftsats.org'}/card/${req.params.id}`);
+  }
+});
+
 // ── Start ────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 initDB()
