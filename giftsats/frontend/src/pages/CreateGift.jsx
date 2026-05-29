@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const LOGO_URL = '/logo.png';
-
+ 
 const designs = [
   {
     id: 'classic',
