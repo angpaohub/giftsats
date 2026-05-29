@@ -247,6 +247,39 @@ export default function CreateGift() {
     link.click();
   }
 
+  async function handleShare() {
+    if (!cardRef.current || !giftCard) return;
+    const link = `${window.location.origin}/card/${giftCard.id}`;
+    try {
+      const { default: html2canvas } = await import('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.esm.js');
+      const canvas = await html2canvas(cardRef.current, {
+        backgroundColor: null, scale: 3, useCORS: true, allowTaint: true,
+      });
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+      const file = new File([blob], `giftsats-${amountSats}sats.png`, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: `🎁 ${amountSats.toLocaleString()} sats Gift Card`,
+          text: `I'm sending you a Bitcoin gift card worth ${amountSats.toLocaleString()} sats! Redeem it here:`,
+          url: link,
+          files: [file],
+        });
+      } else if (navigator.share) {
+        await navigator.share({
+          title: `🎁 ${amountSats.toLocaleString()} sats Gift Card`,
+          text: `I'm sending you a Bitcoin gift card worth ${amountSats.toLocaleString()} sats! Redeem it here:`,
+          url: link,
+        });
+      } else {
+        await navigator.clipboard.writeText(link);
+        showToast('Link copied!');
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') showToast('Could not share. Link copied instead.');
+      await navigator.clipboard.writeText(link).catch(() => {});
+    }
+  }
+
   const mins = String(Math.floor(countdown / 60)).padStart(2, '0');
   const secs = String(countdown % 60).padStart(2, '0');
 
@@ -543,6 +576,12 @@ export default function CreateGift() {
                   fontFamily: 'var(--font-mono)', fontSize: 12,
                   border: '1px solid #222', cursor: 'pointer',
                 }}>+ Create another gift card</button>
+                <button onClick={handleShare} style={{
+                  width: '100%', padding: '14px', borderRadius: 10,
+                  background: '#1a1a1a', color: '#aaa',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
+                  border: '1px solid #333', cursor: 'pointer',
+                }}>↗ Share to Recipient</button>
               </div>
             </div>
           )}
