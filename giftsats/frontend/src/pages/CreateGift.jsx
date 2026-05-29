@@ -515,11 +515,21 @@ export default function CreateGift() {
                 ✓ Payment received! Your gift card is ready to share.
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <button onClick={handleDownloadPNG} style={{
+                <button onClick={() => {
+                  const link = `${window.location.origin}/card/${giftCard.id}`;
+                  navigator.clipboard.writeText(link);
+                  showToast('Link copied! Share with recipient.');
+                }} style={{
                   width: '100%', padding: '14px', borderRadius: 10,
                   background: design.borderColor, color: '#000',
                   fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15,
                   border: 'none', cursor: 'pointer',
+                }}>🔗 Copy Gift Link</button>
+                <button onClick={handleDownloadPNG} style={{
+                  width: '100%', padding: '14px', borderRadius: 10,
+                  background: '#1a1a1a', color: '#aaa',
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
+                  border: '1px solid #333', cursor: 'pointer',
                 }}>↓ Download PNG</button>
                 <button onClick={() => window.print()} style={{
                   width: '100%', padding: '14px', borderRadius: 10,
