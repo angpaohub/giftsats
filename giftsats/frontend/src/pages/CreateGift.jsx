@@ -597,11 +597,6 @@ export default function CreateGift() {
               alignItems: 'center', padding: '24px 20px 20px', gap: 12,
             }}>
               <div style={{ width: '60%', borderTop: `1px dashed ${design.qrAccent}33` }} />
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', lineHeight: 1.7 }}>To redeem, please visit</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: design.qrAccent, fontWeight: 700 }}>giftsats.org</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#555', lineHeight: 1.7 }}>Enter Lightning address to receive sats ⚡</div>
-              </div>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: design.qrAccent, letterSpacing: 2 }}>REDEEM QR</span>
               <div style={{ position: 'relative' }}>
                 <div style={{ background: '#fff', padding: 10, borderRadius: 10, filter: isReady ? 'none' : 'blur(7px)', transition: 'filter 0.6s ease' }}>
@@ -613,6 +608,16 @@ export default function CreateGift() {
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#888' }}>{isPaying ? 'Waiting payment...' : 'Pay to reveal'}</div>
                   </div>
                 )}
+              </div>
+              <div style={{
+                background: `${design.qrAccent}15`,
+                border: `1px solid ${design.qrAccent}55`,
+                borderRadius: 8, padding: '10px 16px',
+                textAlign: 'center', width: '100%', boxSizing: 'border-box',
+              }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#777', marginBottom: 3 }}>To redeem, please visit</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: design.qrAccent, fontWeight: 700, letterSpacing: 1 }}>giftsats.org</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#555', marginTop: 3 }}>Enter Lightning address to receive sats ⚡</div>
               </div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#333', letterSpacing: 1, borderTop: `1px solid ${design.qrBorder}`, paddingTop: 10, width: '100%', textAlign: 'center' }}>
                 {isReady && giftCard?.id ? giftCard.id : 'POWERED BY BITCOIN ⚡ LIGHTNING'}
