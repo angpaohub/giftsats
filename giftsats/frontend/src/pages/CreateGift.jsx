@@ -550,8 +550,9 @@ export default function CreateGift() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <button onClick={() => {
                   const link = `${window.location.origin}/card/${giftCard.id}`;
-                  navigator.clipboard.writeText(link);
-                  showToast('Link copied! Share with recipient.');
+                  const text = `🎁 I'm sending you a Bitcoin gift card worth ${amountSats.toLocaleString()} sats!\n\nRedeem it here: ${link}`;
+                  navigator.clipboard.writeText(text);
+                  showToast('Copied! Ready to paste and send.');
                 }} style={{
                   width: '100%', padding: '14px', borderRadius: 10,
                   background: design.borderColor, color: '#000',
@@ -570,18 +571,18 @@ export default function CreateGift() {
                   fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
                   border: '1px solid #333', cursor: 'pointer',
                 }}>🖨 Print</button>
-                <button onClick={() => { setStatus('preview'); setInvoice(null); setGiftCard(null); }} style={{
-                  width: '100%', padding: '12px', borderRadius: 10,
-                  background: 'transparent', color: '#555',
-                  fontFamily: 'var(--font-mono)', fontSize: 12,
-                  border: '1px solid #222', cursor: 'pointer',
-                }}>+ Create another gift card</button>
                 <button onClick={handleShare} style={{
                   width: '100%', padding: '14px', borderRadius: 10,
                   background: '#1a1a1a', color: '#aaa',
                   fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
                   border: '1px solid #333', cursor: 'pointer',
                 }}>↗ Share to Recipient</button>
+                <button onClick={() => { setStatus('preview'); setInvoice(null); setGiftCard(null); }} style={{
+                  width: '100%', padding: '12px', borderRadius: 10,
+                  background: 'transparent', color: '#555',
+                  fontFamily: 'var(--font-mono)', fontSize: 12,
+                  border: '1px solid #222', cursor: 'pointer',
+                }}>+ Create another gift card</button>
               </div>
             </div>
           )}
