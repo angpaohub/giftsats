@@ -7,7 +7,7 @@ import Admin from './pages/Admin.jsx';
 import Explore from './pages/Explore.jsx';
 import DesignSubmit from './pages/DesignSubmit.jsx';
 import CardPage from './pages/CardPage.jsx';
-
+ 
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
   { id: 'wallet', label: '💼 Redeem' },
