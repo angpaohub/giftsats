@@ -227,8 +227,12 @@ app.post('/api/gift/create', async (req, res) => {
     // Resolve design
     let design = null;
     if (designCode) {
+      const isBuiltIn = designCode.startsWith('giftsats-');
       design = await getDesignByCode(designCode);
-      if (!design || !design.active) {
+      if (!design && !isBuiltIn) {
+        return res.status(404).json({ error: 'Design code not found or unavailable' });
+      }
+      if (design && !design.active && !isBuiltIn) {
         return res.status(404).json({ error: 'Design code not found or unavailable' });
       }
     }
@@ -250,7 +254,7 @@ app.post('/api/gift/create', async (req, res) => {
     const invoice = await createInvoice(totalSats, `GiftSats: ${amountSats} sats`);
     const giftCard = await createGiftCard({
       amountSats,
-      designId: design?.id || 'giftsats-classic',
+      designId: design?.id || designCode || 'giftsats-classic',
       platformFee,
       designFee,
       senderNote: senderNote || '',
