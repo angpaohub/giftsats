@@ -6,6 +6,7 @@ import Donate from './pages/Donate.jsx';
 import Admin from './pages/Admin.jsx';
 import Explore from './pages/Explore.jsx';
 import DesignSubmit from './pages/DesignSubmit.jsx';
+import CardPage from './pages/CardPage.jsx';
 
 const tabs = [
   { id: 'create', label: '⚡ Create Gift Sats' },
@@ -19,6 +20,7 @@ const path = window.location.pathname;
 const isAdmin = path === '/admin';
 const isExplore = path === '/explore';
 const isDesign = path === '/design';
+const isCard = path.startsWith('/card/');
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('create');
@@ -26,6 +28,7 @@ export default function App() {
   if (isAdmin) return <Admin />;
   if (isExplore) return <Explore />;
   if (isDesign) return <DesignSubmit />;
+  if (isCard) return <CardPage />;
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
