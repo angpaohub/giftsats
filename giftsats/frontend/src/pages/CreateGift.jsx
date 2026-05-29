@@ -176,7 +176,7 @@ export default function CreateGift() {
       const res = await fetch(`${BACKEND}/api/gift/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountSats, senderNote, designCode: designCode.trim() || undefined, senderLightningAddress: senderLightningAddress || undefined }),
+        body: JSON.stringify({ amountSats, senderNote, designCode: designCode.trim() || `giftsats-${designs[selectedDesign].id}`, senderLightningAddress: senderLightningAddress || undefined }),
       });
       const data = await res.json();
       if (data.paymentRequest) {
