@@ -328,7 +328,7 @@ export default function CreateGift() {
               {!designPreview && !designError && (
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#333', marginTop: 6 }}>
                   Browse designs at{' '}
-                  <a href="/explore" style={{ color: '#F7931A', textDecoration: 'none' }}>giftsats.com/explore</a>
+                  <a href="/explore" style={{ color: '#F7931A', textDecoration: 'none' }}>giftsats.org/explore</a>
                 </div>
               )}
               {/* Design preview card */}
@@ -610,14 +610,14 @@ export default function CreateGift() {
                 )}
               </div>
               <div style={{
-                background: `${design.qrAccent}15`,
-                border: `1px solid ${design.qrAccent}55`,
+                background: '#161616',
+                border: '1px solid #2a2a2a',
                 borderRadius: 8, padding: '10px 16px',
                 textAlign: 'center', width: '100%', boxSizing: 'border-box',
               }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#777', marginBottom: 3 }}>To redeem, please visit</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: design.qrAccent, fontWeight: 700, letterSpacing: 1 }}>giftsats.org</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#555', marginTop: 3 }}>Enter Lightning address to receive sats ⚡</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#444', marginBottom: 4, letterSpacing: 1 }}>TO REDEEM, PLEASE VISIT</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: '#e0e0e0', fontWeight: 700, letterSpacing: 1 }}>giftsats.org</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#3a3a3a', marginTop: 4, letterSpacing: 0.5 }}>Enter Lightning address to receive sats ⚡</div>
               </div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: '#333', letterSpacing: 1, borderTop: `1px solid ${design.qrBorder}`, paddingTop: 10, width: '100%', textAlign: 'center' }}>
                 {isReady && giftCard?.id ? giftCard.id : 'POWERED BY BITCOIN ⚡ LIGHTNING'}
