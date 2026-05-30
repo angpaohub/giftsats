@@ -158,6 +158,11 @@ export default function CreateGift() {
       }
       setGiftCard(m.giftCard);
       setAmountSats(m.giftCard.amountSats);
+      setSelectedDesign(m.selectedDesign ?? 0);
+      setDesignCode(m.designCode ?? '');
+      setDesignPreview(m.designPreview ?? null);
+      setSenderNote(m.senderNote ?? '');
+      setSenderName(m.senderName ?? '');
       setStatus('ready');
     } catch {
       localStorage.removeItem('giftsats_minted');
@@ -320,6 +325,11 @@ export default function CreateGift() {
           localStorage.setItem('giftsats_minted', JSON.stringify({
             giftCard: data,
             mintedAt: Date.now(),
+            selectedDesign,
+            designCode,
+            designPreview,
+            senderNote,
+            senderName,
           }));
           setGiftCard(data);
           setStatus('ready');
