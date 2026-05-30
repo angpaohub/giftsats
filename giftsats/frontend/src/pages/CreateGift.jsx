@@ -179,9 +179,10 @@ export default function CreateGift() {
     }));
   }, [amountSats, selectedDesign, designCode, senderNote, senderName, senderLightningAddress, status]);
 
-  // ── Restore form draft if no pending invoice ──
+  // ── Restore form draft if no pending invoice or minted card ──
   useEffect(() => {
     if (localStorage.getItem('giftsats_pending')) return;
+    if (localStorage.getItem('giftsats_minted')) return;
     const raw = localStorage.getItem('giftsats_form');
     if (!raw) return;
     try {
