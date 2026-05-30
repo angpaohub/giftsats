@@ -222,6 +222,10 @@ export default function CardPage() {
         {/* Redeem form */}
         {isReady && !redeemStatus?.ok && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444', lineHeight: 1.8 }}>
+              To redeem, scan QR code at <span style={{ color: '#e0e0e0' }}>giftsats.org</span><br />
+              or enter your Lightning address here
+            </div>
             <input
               type="text"
               placeholder="your@lightning.address"
