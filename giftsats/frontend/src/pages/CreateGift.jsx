@@ -129,6 +129,7 @@ export default function CreateGift() {
   const [designPreview, setDesignPreview] = useState(null);
   const [designLoading, setDesignLoading] = useState(false);
   const [designError, setDesignError] = useState('');
+  const [platformStats, setPlatformStats] = useState(null);
 
   const cardRef = useRef(null);
   const qrCanvasRef = useRef(null);
@@ -137,6 +138,13 @@ export default function CreateGift() {
 
   const isMobile = useIsMobile();
   const design = designs[selectedDesign];
+
+  useEffect(() => {
+    fetch(`${BACKEND}/api/stats`)
+      .then(r => r.json())
+      .then(data => setPlatformStats(data))
+      .catch(() => {});
+  }, []);
   const isReady = status === 'ready';
   const isPaying = status === 'pay';
   const feeSats = Math.ceil(amountSats * FEE_PERCENT);
@@ -300,9 +308,21 @@ export default function CreateGift() {
         <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 28, letterSpacing: '-1px', margin: 0 }}>
           Create <span style={{ color: '#F7931A' }}>Gift Card</span>
         </h2>
-        <p style={{ color: '#555', fontFamily: 'var(--font-mono)', fontSize: 12, marginTop: 6, marginBottom: 0 }}>
-          Bitcoin gift cards powered by Lightning ⚡
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8 }}>
+          <p style={{ color: '#555', fontFamily: 'var(--font-mono)', fontSize: 12, margin: 0 }}>
+            Bitcoin gift cards powered by Lightning ⚡
+          </p>
+          {platformStats && parseInt(platformStats.total_sats) > 0 && (
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 11,
+              color: '#F7931A', background: '#F7931A11',
+              border: '1px solid #F7931A33',
+              borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap',
+            }}>
+              ⚡ {parseInt(platformStats.total_sats).toLocaleString()} sats gifted
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 24 : 40, alignItems: 'start' }}>
