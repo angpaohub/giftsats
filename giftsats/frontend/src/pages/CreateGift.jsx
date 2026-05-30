@@ -145,6 +145,69 @@ export default function CreateGift() {
       .then(data => setPlatformStats(data))
       .catch(() => {});
   }, []);
+
+  // ── Save form draft while user is filling it in ──
+  useEffect(() => {
+    if (status !== 'preview') return;
+    localStorage.setItem('giftsats_form', JSON.stringify({
+      amountSats, selectedDesign, designCode,
+      senderNote, senderName, senderLightningAddress,
+      savedAt: Date.now(),
+    }));
+  }, [amountSats, selectedDesign, designCode, senderNote, senderName, senderLightningAddress, status]);
+
+  // ── Restore form draft if no pending invoice ──
+  useEffect(() => {
+    if (localStorage.getItem('giftsats_pending')) return;
+    const raw = localStorage.getItem('giftsats_form');
+    if (!raw) return;
+    try {
+      const f = JSON.parse(raw);
+      // Drop if older than 10 minutes
+      if (f.savedAt && Date.now() - f.savedAt > 10 * 60 * 1000) {
+        localStorage.removeItem('giftsats_form');
+        return;
+      }
+      setAmountSats(f.amountSats ?? 1000);
+      setSelectedDesign(f.selectedDesign ?? 0);
+      setDesignCode(f.designCode ?? '');
+      setSenderNote(f.senderNote ?? '');
+      setSenderName(f.senderName ?? '');
+      setSenderLightningAddress(f.senderLightningAddress ?? '');
+    } catch {
+      localStorage.removeItem('giftsats_form');
+    }
+  }, []);
+
+  // ── Restore pending invoice if user left to pay in wallet ──
+  useEffect(() => {
+    const raw = localStorage.getItem('giftsats_pending');
+    if (!raw) return;
+    try {
+      const p = JSON.parse(raw);
+      // Drop if invoice expired
+      if (p.expiresAt && new Date() > new Date(p.expiresAt)) {
+        localStorage.removeItem('giftsats_pending');
+        return;
+      }
+      // Restore all form + invoice state
+      setInvoice(p.invoice);
+      setAmountSats(p.amountSats);
+      setNetworkFee(p.networkFee ?? 2);
+      setExpiresAt(p.expiresAt ?? null);
+      setSelectedDesign(p.selectedDesign ?? 0);
+      setDesignCode(p.designCode ?? '');
+      setSenderNote(p.senderNote ?? '');
+      setSenderName(p.senderName ?? '');
+      setSenderLightningAddress(p.senderLightningAddress ?? '');
+      setDesignPreview(p.designPreview ?? null);
+      setStatus('pay');
+      startPolling(p.giftCardId);
+    } catch {
+      localStorage.removeItem('giftsats_pending');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const isReady = status === 'ready';
   const isPaying = status === 'pay';
   const feeSats = Math.ceil(amountSats * FEE_PERCENT);
@@ -159,11 +222,16 @@ export default function CreateGift() {
 
   useEffect(() => {
     if (status !== 'pay') return;
-    setCountdown(600);
+    // Calculate remaining seconds from expiresAt, fallback to 600
+    const remaining = expiresAt
+      ? Math.max(0, Math.floor((new Date(expiresAt) - Date.now()) / 1000))
+      : 600;
+    setCountdown(remaining);
     timerRef.current = setInterval(() => {
       setCountdown(c => {
         if (c <= 1) {
           clearInterval(timerRef.current);
+          localStorage.removeItem('giftsats_pending');
           setStatus('preview');
           showToast('Invoice expired. Try again.', 'error');
           return 0;
@@ -192,6 +260,21 @@ export default function CreateGift() {
         setNetworkFee(data.networkFee ?? 2);
         setExpiresAt(data.expiresAt ?? null);
         setStatus('pay');
+        // ── Persist so user can return after paying in wallet app ──
+        localStorage.removeItem('giftsats_form');
+        localStorage.setItem('giftsats_pending', JSON.stringify({
+          giftCardId: data.giftCardId,
+          invoice: data,
+          amountSats,
+          networkFee: data.networkFee ?? 2,
+          expiresAt: data.expiresAt ?? null,
+          selectedDesign,
+          designCode: designCode.trim(),
+          senderNote,
+          senderName,
+          senderLightningAddress,
+          designPreview,
+        }));
         startPolling(data.giftCardId);
       } else {
         showToast(data.error || 'Failed to create invoice', 'error');
@@ -209,6 +292,8 @@ export default function CreateGift() {
         if (data.status === 'minted') {
           clearInterval(pollRef.current);
           clearInterval(timerRef.current);
+          localStorage.removeItem('giftsats_pending');
+          localStorage.removeItem('giftsats_form');
           setGiftCard(data);
           setStatus('ready');
           showToast('Payment received! Gift card ready 🎉');
@@ -554,6 +639,17 @@ export default function CreateGift() {
                 background: '#1a1a1a', border: '1px solid #333',
                 color: '#aaa', fontFamily: 'var(--font-mono)', fontSize: 13, cursor: 'pointer', marginBottom: 12,
               }}>Copy Invoice</button>
+              <button onClick={() => {
+                clearInterval(pollRef.current);
+                clearInterval(timerRef.current);
+                localStorage.removeItem('giftsats_pending');
+                setInvoice(null);
+                setStatus('preview');
+              }} style={{
+                width: '100%', padding: '10px', borderRadius: 10,
+                background: 'transparent', border: '1px solid #2a2a2a',
+                color: '#555', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer', marginBottom: 12,
+              }}>✕ Cancel & Edit Details</button>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444', textAlign: 'center' }}>
                 • Waiting for payment...
               </div>
