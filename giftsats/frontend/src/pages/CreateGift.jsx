@@ -146,6 +146,24 @@ export default function CreateGift() {
       .catch(() => {});
   }, []);
 
+  // ── Restore minted card if user refreshed within 10 min ──
+  useEffect(() => {
+    const raw = localStorage.getItem('giftsats_minted');
+    if (!raw) return;
+    try {
+      const m = JSON.parse(raw);
+      if (Date.now() - m.mintedAt > 10 * 60 * 1000) {
+        localStorage.removeItem('giftsats_minted');
+        return;
+      }
+      setGiftCard(m.giftCard);
+      setAmountSats(m.giftCard.amountSats);
+      setStatus('ready');
+    } catch {
+      localStorage.removeItem('giftsats_minted');
+    }
+  }, []);
+
   // ── Save form draft while user is filling it in ──
   useEffect(() => {
     if (status !== 'preview') return;
@@ -298,6 +316,11 @@ export default function CreateGift() {
           clearInterval(timerRef.current);
           localStorage.removeItem('giftsats_pending');
           localStorage.removeItem('giftsats_form');
+          // Keep minted card for 10 min in case user refreshes
+          localStorage.setItem('giftsats_minted', JSON.stringify({
+            giftCard: data,
+            mintedAt: Date.now(),
+          }));
           setGiftCard(data);
           setStatus('ready');
           showToast('Payment received! Gift card ready 🎉');
@@ -697,7 +720,7 @@ export default function CreateGift() {
                   fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
                   border: '1px solid #333', cursor: 'pointer',
                 }}>↗ Share to Recipient</button>
-                <button onClick={() => { setStatus('preview'); setInvoice(null); setGiftCard(null); }} style={{
+                <button onClick={() => { localStorage.removeItem('giftsats_minted'); setStatus('preview'); setInvoice(null); setGiftCard(null); }} style={{
                   width: '100%', padding: '12px', borderRadius: 10,
                   background: 'transparent', color: '#555',
                   fontFamily: 'var(--font-mono)', fontSize: 12,
