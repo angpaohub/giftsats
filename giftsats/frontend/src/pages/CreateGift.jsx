@@ -185,8 +185,9 @@ export default function CreateGift() {
     if (!raw) return;
     try {
       const p = JSON.parse(raw);
-      // Drop if invoice expired
-      if (p.expiresAt && new Date() > new Date(p.expiresAt)) {
+      // Drop if invoice expired (use invoiceExpiresAt, not card expiresAt)
+      const invoiceExpiry = p.invoiceExpiresAt ?? (p.savedAt + 10 * 60 * 1000);
+      if (Date.now() > invoiceExpiry) {
         localStorage.removeItem('giftsats_pending');
         return;
       }
@@ -222,9 +223,11 @@ export default function CreateGift() {
 
   useEffect(() => {
     if (status !== 'pay') return;
-    // Calculate remaining seconds from expiresAt, fallback to 600
-    const remaining = expiresAt
-      ? Math.max(0, Math.floor((new Date(expiresAt) - Date.now()) / 1000))
+    // Calculate remaining seconds from invoiceExpiresAt (10 min window), fallback to 600
+    const pending = localStorage.getItem('giftsats_pending');
+    const invoiceExpiry = pending ? (JSON.parse(pending).invoiceExpiresAt ?? null) : null;
+    const remaining = invoiceExpiry
+      ? Math.max(0, Math.floor((invoiceExpiry - Date.now()) / 1000))
       : 600;
     setCountdown(remaining);
     timerRef.current = setInterval(() => {
@@ -268,6 +271,7 @@ export default function CreateGift() {
           amountSats,
           networkFee: data.networkFee ?? 2,
           expiresAt: data.expiresAt ?? null,
+          invoiceExpiresAt: Date.now() + 10 * 60 * 1000,
           selectedDesign,
           designCode: designCode.trim(),
           senderNote,
