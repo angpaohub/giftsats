@@ -36,13 +36,41 @@ export default function Wallet() {
   const [uploadError, setUploadError] = useState(null);
   const [uploadLoading, setUploadLoading] = useState(false);
 
+  const [cardInfo, setCardInfo] = useState(null);
+
   useEffect(() => {
-    if (!cashuToken) { setParsedGiftCardId(null); return; }
+    if (!cashuToken) { setParsedGiftCardId(null); setCardInfo(null); return; }
     try {
       const decoded = b64decode(cashuToken.replace('cashuA_', ''));
       setParsedGiftCardId(decoded?.giftCardId || null);
     } catch { setParsedGiftCardId(null); }
   }, [cashuToken]);
+
+  async function handleScannedValue(raw) {
+    const trimmed = raw.trim();
+    const match = trimmed.match(/giftsats\.org\/card\/([a-zA-Z0-9_-]+)/);
+    if (match) {
+      const cardId = match[1];
+      setStatus({ ok: null, msg: '⏳ Loading gift card...' });
+      try {
+        const res = await fetch(`${BACKEND}/api/gift/${cardId}`);
+        const data = await res.json();
+        if (data.error || !data.cashuToken) {
+          setStatus({ ok: false, msg: '✗ Gift card not found.' });
+          return;
+        }
+        setCashuToken(data.cashuToken);
+        setParsedGiftCardId(data.id);
+        setCardInfo({ amountSats: data.amountSats, id: data.id });
+        setStatus(null);
+      } catch {
+        setStatus({ ok: false, msg: '✗ Failed to load gift card.' });
+      }
+    } else {
+      setCashuToken(trimmed);
+      setCardInfo(null);
+    }
+  }
 
   const stopCamera = useCallback(() => {
     if (readerRef.current) {
@@ -73,7 +101,7 @@ export default function Wallet() {
 
         reader.decodeFromVideoElement(videoRef.current, (result, err) => {
           if (result) {
-            setCashuToken(result.getText());
+            handleScannedValue(result.getText());
             stopCamera();
           }
         });
@@ -108,7 +136,7 @@ export default function Wallet() {
       URL.revokeObjectURL(url);
 
       const result = await reader.decodeFromCanvas(canvas);
-      setCashuToken(result.getText());
+      handleScannedValue(result.getText());
     } catch {
       setUploadError('No QR code found in image. Try uploading the gift card PNG directly.');
     } finally {
@@ -209,7 +237,7 @@ export default function Wallet() {
 
         {cashuToken && (
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#39ff14', padding: '8px 12px', background: '#0d1a0d', borderRadius: 8, border: '1px solid #1a3a1a' }}>
-            ✓ Gift card loaded {parsedGiftCardId ? `• ID: ${parsedGiftCardId.slice(0, 8)}...` : ''}
+            ✓ Gift card loaded {cardInfo ? `• ${cardInfo.amountSats.toLocaleString()} sats` : parsedGiftCardId ? `• ID: ${parsedGiftCardId.slice(0, 8)}...` : ''}
           </div>
         )}
 
