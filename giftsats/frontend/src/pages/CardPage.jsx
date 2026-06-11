@@ -95,7 +95,7 @@ export default function CardPage() {
     if (!card?.cashuToken || !qrCanvasRef.current) return;
     // Small delay to ensure canvas is visible after designData sets background
     const timer = setTimeout(() => {
-      drawQRWithLogo(qrCanvasRef.current, card.cashuToken, LOGO_URL);
+      drawQRWithLogo(qrCanvasRef.current, `https://giftsats.org/card/${card.id}`, LOGO_URL);
     }, 50);
     return () => clearTimeout(timer);
   }, [card, designData]);
@@ -209,7 +209,7 @@ export default function CardPage() {
               <canvas ref={qrCanvasRef} width={160} height={160} style={{ display: 'block', borderRadius: 4 }} />
             </div>
             <div style={{ background: '#161616', border: '1px solid #2a2a2a', borderRadius: 8, padding: '10px 16px', textAlign: 'center', width: '100%', boxSizing: 'border-box' }}>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#444', marginBottom: 4, letterSpacing: 1 }}>TO REDEEM, PLEASE VISIT</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#444', marginBottom: 4, letterSpacing: 1 }}>SCAN TO REDEEM AT</div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: '#e0e0e0', fontWeight: 700, letterSpacing: 1 }}>giftsats.org</div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#3a3a3a', marginTop: 4 }}>Enter Lightning address to receive sats ⚡</div>
             </div>
@@ -223,8 +223,7 @@ export default function CardPage() {
         {isReady && !redeemStatus?.ok && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#444', lineHeight: 1.8 }}>
-              To redeem, scan QR code at <span style={{ color: '#e0e0e0' }}>giftsats.org</span><br />
-              or enter your Lightning address here
+              Scan QR code or enter your Lightning address below
             </div>
             <input
               type="text"
