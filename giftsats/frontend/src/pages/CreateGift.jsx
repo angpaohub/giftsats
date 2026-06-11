@@ -241,7 +241,7 @@ export default function CreateGift() {
 
   useEffect(() => {
     if (!qrCanvasRef.current) return;
-    const token = isReady && giftCard?.cashuToken ? giftCard.cashuToken : 'giftsats_placeholder';
+    const token = isReady && giftCard?.id ? `https://giftsats.org/card/${giftCard.id}` : 'giftsats_placeholder';
     drawQRWithLogo(qrCanvasRef.current, token, LOGO_URL);
   }, [isReady, giftCard, selectedDesign]);
 
@@ -819,7 +819,7 @@ export default function CreateGift() {
                 borderRadius: 8, padding: '10px 16px',
                 textAlign: 'center', width: '100%', boxSizing: 'border-box',
               }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#444', marginBottom: 4, letterSpacing: 1 }}>TO REDEEM, PLEASE VISIT</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#444', marginBottom: 4, letterSpacing: 1 }}>SCAN TO REDEEM AT</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: '#e0e0e0', fontWeight: 700, letterSpacing: 1 }}>giftsats.org</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#3a3a3a', marginTop: 4, letterSpacing: 0.5 }}>Enter Lightning address to receive sats ⚡</div>
               </div>
