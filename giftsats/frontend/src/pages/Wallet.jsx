@@ -11,10 +11,13 @@ function b64decode(str) {
   try { return JSON.parse(atob(str)); } catch { return null; }
 }
 
-// Load zxing-js — handles logo overlay QR codes
+// Load zxing-js — cached after first load
+let zxingCache = null;
 async function loadZxing() {
+  if (zxingCache) return zxingCache;
   const { BrowserMultiFormatReader } = await import('https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm');
-  return BrowserMultiFormatReader;
+  zxingCache = BrowserMultiFormatReader;
+  return zxingCache;
 }
 
 export default function Wallet() {
@@ -265,13 +268,13 @@ export default function Wallet() {
           {loading ? 'Processing...' : 'Redeem ⚡'}
         </button>
 
-        {status && (
+        {status && !cashuToken && (
           <div style={{
             padding: '14px', borderRadius: 10,
-            background: status.ok ? '#0d1a0d' : '#1a0d0d',
-            border: `1px solid ${status.ok ? '#1a3a1a' : '#3a1a1a'}`,
+            background: status.ok === true ? '#0d1a0d' : status.ok === null ? '#111' : '#1a0d0d',
+            border: `1px solid ${status.ok === true ? '#1a3a1a' : status.ok === null ? '#333' : '#3a1a1a'}`,
             fontFamily: 'var(--font-mono)', fontSize: 12,
-            color: status.ok ? '#39ff14' : '#ff4444',
+            color: status.ok === true ? '#39ff14' : status.ok === null ? '#888' : '#ff4444',
             lineHeight: 1.6,
           }}>
             {status.msg}
