@@ -68,6 +68,8 @@ function expiryInfo(card) {
   const now = new Date();
   const exp = new Date(card.expiresAt);
   const diffDays = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
+  // Final outcomes take priority — these are done, not "expiring"
+  if (card.refundStatus === 'refunded' || card.refundStatus === 'forfeited') return null;
   if (card.status === 'redeemed') return null;
   if (now > exp) return { label: 'EXPIRED', color: '#ff4444', urgent: true };
   if (diffDays <= 3) return { label: `${diffDays}d left`, color: '#ff6b35', urgent: true };
@@ -116,10 +118,16 @@ function CardsTable({ rows, allCards }) {
                 <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
                   {(() => {
                     const statusColors = { minted: '#F7931A', redeemed: '#39ff14', pending: '#555' };
-                    const c = statusColors[card.status] || '#555';
-                    // override if expired
-                    const displayStatus = isExpiredRow ? 'EXPIRED' : card.status?.toUpperCase();
-                    const displayColor = isExpiredRow ? '#ff4444' : c;
+                    let displayStatus = card.status?.toUpperCase();
+                    let displayColor = statusColors[card.status] || '#555';
+                    // Final refund outcomes override raw status
+                    if (card.refundStatus === 'refunded') {
+                      displayStatus = 'REFUNDED'; displayColor = '#3b9eff';
+                    } else if (card.refundStatus === 'forfeited') {
+                      displayStatus = 'FORFEITED'; displayColor = '#9b6dff';
+                    } else if (isExpiredRow) {
+                      displayStatus = 'EXPIRED'; displayColor = '#ff4444';
+                    }
                     return (
                       <span style={{ background: displayColor + '15', border: `1px solid ${displayColor}44`, color: displayColor, borderRadius: 4, padding: '2px 8px', fontSize: 10, letterSpacing: 1 }}>
                         {displayStatus}
@@ -220,17 +228,25 @@ export default function Admin() {
   // Derived counts
   const now = new Date();
   const pendingCount   = cards.filter(c => c.status === 'pending').length;
-  const mintedCount    = cards.filter(c => c.status === 'minted').length;
-  const redeemedCount  = cards.filter(c => c.status === 'redeemed').length;
-  const expiredCount   = cards.filter(c => c.status === 'minted' && c.expiresAt && new Date(c.expiresAt) < now).length;
-  const expiringCount  = cards.filter(c => c.status === 'minted' && c.expiresAt && new Date(c.expiresAt) > now && Math.ceil((new Date(c.expiresAt) - now) / (1000*60*60*24)) <= 7).length;
-  const forfeitableSats = cards.filter(c => c.status === 'minted' && c.expiresAt && new Date(c.expiresAt) < now && !c.senderLightningAddress).reduce((s, c) => s + (c.amountSats || 0), 0);
-  const refundableSats  = cards.filter(c => c.status === 'minted' && c.expiresAt && new Date(c.expiresAt) < now && c.senderLightningAddress).reduce((s, c) => s + (c.amountSats || 0), 0);
+  const mintedCount    = cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) >= now).length;
+  const redeemedCount  = cards.filter(c => c.status === 'redeemed' && c.refundStatus === 'none').length;
+  // Expired but cron hasn't processed yet (still refund_status none)
+  const expiredCount   = cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) < now).length;
+  const expiringCount  = cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) > now && Math.ceil((new Date(c.expiresAt) - now) / (1000*60*60*24)) <= 7).length;
+  // Final outcomes (cron has processed)
+  const refundedCount  = cards.filter(c => c.refundStatus === 'refunded').length;
+  const forfeitedCount = cards.filter(c => c.refundStatus === 'forfeited').length;
+  const forfeitableSats = cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) < now && !c.senderLightningAddress).reduce((s, c) => s + (c.amountSats || 0), 0);
+  const refundableSats  = cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) < now && c.senderLightningAddress).reduce((s, c) => s + (c.amountSats || 0), 0);
 
   // Filtered cards for table
   const filteredCards = (() => {
-    if (filter === 'expired') return cards.filter(c => c.status === 'minted' && c.expiresAt && new Date(c.expiresAt) < now);
-    if (filter === 'expiring') return cards.filter(c => c.status === 'minted' && c.expiresAt && new Date(c.expiresAt) > now && Math.ceil((new Date(c.expiresAt) - now) / (1000*60*60*24)) <= 7);
+    if (filter === 'expired') return cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) < now);
+    if (filter === 'expiring') return cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) > now && Math.ceil((new Date(c.expiresAt) - now) / (1000*60*60*24)) <= 7);
+    if (filter === 'minted') return cards.filter(c => c.status === 'minted' && c.refundStatus === 'none' && c.expiresAt && new Date(c.expiresAt) >= now);
+    if (filter === 'redeemed') return cards.filter(c => c.status === 'redeemed' && c.refundStatus === 'none');
+    if (filter === 'refunded') return cards.filter(c => c.refundStatus === 'refunded');
+    if (filter === 'forfeited') return cards.filter(c => c.refundStatus === 'forfeited');
     if (filter === 'all') return cards;
     return cards.filter(c => c.status === filter);
   })();
@@ -349,10 +365,12 @@ export default function Admin() {
             )}
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 40 }}>
-              <StatCard label="Total Redeemed" value={stats?.redeemed_count ?? 0} sub="gift cards" accent="#39ff14" animate />
+              <StatCard label="Total Redeemed" value={redeemedCount} sub="claimed by recipient" accent="#39ff14" animate />
               <StatCard label="Sats Redeemed" value={stats?.redeemed_sats ?? 0} sub={`≈ $${(((parseInt(stats?.redeemed_sats) || 0) / 100_000_000) * 103000).toFixed(2)} USD`} accent="#F7931A" animate />
-              <StatCard label="Active Cards" value={stats?.minted_count ?? 0} sub="awaiting redemption" accent="#00C97A" animate />
-              <StatCard label="Expired (pending)" value={expiredCount} sub="processing refund/forfeit" accent="#ff4444" animate />
+              <StatCard label="Active Cards" value={mintedCount} sub="awaiting redemption" accent="#00C97A" animate />
+              <StatCard label="Refunded" value={refundedCount} sub={`${stats?.refunded_sats ?? 0} sats → senders`} accent="#3b9eff" animate />
+              <StatCard label="Forfeited" value={forfeitedCount} sub={`${stats?.forfeited_sats ?? 0} sats kept`} accent="#9b6dff" animate />
+              <StatCard label="Pending Refund/Forfeit" value={expiredCount} sub="expired, awaiting cron" accent="#ff4444" animate />
             </div>
 
             {/* Status breakdown */}
@@ -363,8 +381,10 @@ export default function Admin() {
                   { label: 'PENDING', count: pendingCount, color: '#555' },
                   { label: 'MINTED', count: mintedCount, color: '#F7931A' },
                   { label: 'REDEEMED', count: redeemedCount, color: '#39ff14' },
-                  { label: 'EXPIRED', count: expiredCount, color: '#ff4444' },
                   { label: 'EXPIRING 7D', count: expiringCount, color: '#F7931A' },
+                  { label: 'EXPIRED', count: expiredCount, color: '#ff4444' },
+                  { label: 'REFUNDED', count: refundedCount, color: '#3b9eff' },
+                  { label: 'FORFEITED', count: forfeitedCount, color: '#9b6dff' },
                 ].map(({ label, count, color }) => {
                   const pct = cards.length > 0 ? Math.round((count / cards.length) * 100) : 0;
                   return (
@@ -391,6 +411,8 @@ export default function Admin() {
                 { key: 'redeemed', label: `REDEEMED (${redeemedCount})` },
                 { key: 'expired', label: `EXPIRED (${expiredCount})`, accent: '#ff4444' },
                 { key: 'expiring', label: `EXPIRING ≤7D (${expiringCount})`, accent: '#F7931A' },
+                { key: 'refunded', label: `REFUNDED (${refundedCount})`, accent: '#3b9eff' },
+                { key: 'forfeited', label: `FORFEITED (${forfeitedCount})`, accent: '#9b6dff' },
               ].map(({ key, label, accent }) => (
                 <button key={key} onClick={() => setFilter(key)} style={{
                   background: filter === key ? (accent || '#F7931A') : '#111',
