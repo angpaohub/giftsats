@@ -139,6 +139,9 @@ export default function CardPage() {
   const design = getDesign();
   const isReady = card?.status === 'minted';
   const isRedeemed = card?.status === 'redeemed';
+  // Card expired and processed by cron (refunded to sender or forfeited)
+  const isExpired = card?.status === 'expired' || card?.refundStatus === 'refunded' || card?.refundStatus === 'forfeited';
+  const isRefunded = card?.refundStatus === 'refunded';
 
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a' }}>
@@ -195,8 +198,8 @@ export default function CardPage() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', position: 'relative' }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.6)' }}>by GiftSats</div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isRedeemed ? '#aaa' : '#39ff14' }}>
-                {isRedeemed ? '✓ REDEEMED' : isReady ? '✓ READY TO REDEEM' : '⏳ PENDING'}
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isExpired ? '#ff6b6b' : isRedeemed ? '#aaa' : '#39ff14' }}>
+                {isExpired ? '⏳ EXPIRED' : isRedeemed ? '✓ REDEEMED' : isReady ? '✓ READY TO REDEEM' : '⏳ PENDING'}
               </div>
             </div>
           </div>
@@ -251,6 +254,15 @@ export default function CardPage() {
         {isRedeemed && (
           <div style={{ padding: '14px', borderRadius: 10, background: '#111', border: '1px solid #222', fontFamily: 'var(--font-mono)', fontSize: 12, color: '#555', textAlign: 'center' }}>
             This gift card has been redeemed.
+          </div>
+        )}
+
+        {isExpired && (
+          <div style={{ padding: '14px', borderRadius: 10, background: '#1a0d0d', border: '1px solid #3a1a1a', fontFamily: 'var(--font-mono)', fontSize: 12, color: '#ff6b6b', textAlign: 'center', lineHeight: 1.6 }}>
+            ⏳ This gift card has expired.
+            {isRefunded
+              ? ' The sats have been returned to the sender.'
+              : ' It was not redeemed within 30 days.'}
           </div>
         )}
 
