@@ -435,14 +435,17 @@ async function processExpiredCards() {
       if (card.senderLightningAddress) {
         await payLightningAddress(card.senderLightningAddress, card.amountSats);
         await updateGiftCard(card.id, {
-          status: 'redeemed',
+          status: 'expired',
           refundStatus: 'refunded',
           redeemedTo: card.senderLightningAddress,
           redeemedAt: new Date().toISOString(),
         });
         console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress}`);
       } else {
-        await updateGiftCard(card.id, { refundStatus: 'forfeited' });
+        await updateGiftCard(card.id, {
+          status: 'expired',
+          refundStatus: 'forfeited',
+        });
         console.log(`[expiry] Forfeited ${card.amountSats} sats (card ${card.id})`);
       }
     } catch (err) {
