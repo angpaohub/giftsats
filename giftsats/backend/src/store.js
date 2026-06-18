@@ -185,10 +185,15 @@ export async function listExpiredUnredeemed() {
 export async function getStats() {
   const { rows } = await pool.query(`
     SELECT
-      COUNT(*) FILTER (WHERE status = 'minted')                        AS minted_count,
-      COUNT(*) FILTER (WHERE status = 'redeemed')                      AS redeemed_count,
-      COUNT(*) FILTER (WHERE status = 'minted' AND expires_at < NOW()) AS expired_count,
-      COALESCE(SUM(amount_sats) FILTER (WHERE status = 'redeemed'), 0) AS redeemed_sats,
+      COUNT(*) FILTER (WHERE status = 'pending')                       AS pending_count,
+      COUNT(*) FILTER (WHERE status = 'minted' AND refund_status = 'none' AND expires_at >= NOW()) AS minted_count,
+      COUNT(*) FILTER (WHERE status = 'redeemed' AND refund_status = 'none') AS redeemed_count,
+      COUNT(*) FILTER (WHERE status = 'minted' AND refund_status = 'none' AND expires_at < NOW()) AS expired_count,
+      COUNT(*) FILTER (WHERE refund_status = 'refunded')              AS refunded_count,
+      COUNT(*) FILTER (WHERE refund_status = 'forfeited')             AS forfeited_count,
+      COALESCE(SUM(amount_sats) FILTER (WHERE status = 'redeemed' AND refund_status = 'none'), 0) AS redeemed_sats,
+      COALESCE(SUM(amount_sats) FILTER (WHERE refund_status = 'refunded'), 0)  AS refunded_sats,
+      COALESCE(SUM(amount_sats) FILTER (WHERE refund_status = 'forfeited'), 0) AS forfeited_sats,
       COALESCE(SUM(amount_sats) FILTER (WHERE status IN ('minted','redeemed')), 0) AS total_sats,
       (SELECT COUNT(*) FROM designs WHERE active = true)               AS active_designs
     FROM gift_cards
