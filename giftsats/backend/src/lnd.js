@@ -53,7 +53,6 @@ export async function payLightningAddress(lightningAddress, amountSats) {
   if (payData.payment_error) {
     throw new Error(`LND routing failed: ${payData.payment_error}`);
   }
-  // เช็คซ้ำอีกชั้น: ถ้าไม่มี payment_preimage แปลว่าจ่ายไม่สำเร็จจริง
   if (!payData.payment_preimage) {
     throw new Error('LND payment did not return a preimage — payment likely failed');
   }
@@ -69,4 +68,31 @@ export async function getChannelBalance() {
     localSats: parseInt(data.local_balance?.sat || 0),
     remoteSats: parseInt(data.remote_balance?.sat || 0),
   };
+}
+
+export async function getNodeInfo() {
+  const res = await fetch(`${LND_URL}/v1/getinfo`, { agent, headers });
+  if (!res.ok) throw new Error(`LND getinfo error: ${await res.text()}`);
+  return res.json();
+}
+
+export async function listChannels() {
+  const res = await fetch(`${LND_URL}/v1/channels`, { agent, headers });
+  if (!res.ok) throw new Error(`LND channels error: ${await res.text()}`);
+  const data = await res.json();
+  return data.channels || [];
+}
+
+export async function listInvoices(limit = 50) {
+  const res = await fetch(`${LND_URL}/v1/invoices?num_max_invoices=${limit}&reversed=true`, { agent, headers });
+  if (!res.ok) throw new Error(`LND invoices error: ${await res.text()}`);
+  const data = await res.json();
+  return data.invoices || [];
+}
+
+export async function listPayments(limit = 50) {
+  const res = await fetch(`${LND_URL}/v1/payments?max_payments=${limit}&reversed=true`, { agent, headers });
+  if (!res.ok) throw new Error(`LND payments error: ${await res.text()}`);
+  const data = await res.json();
+  return data.payments || [];
 }
