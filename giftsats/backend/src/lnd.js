@@ -47,9 +47,6 @@ export async function payLightningAddress(lightningAddress, amountSats) {
   if (!payRes.ok) throw new Error(`LND pay error: ${await payRes.text()}`);
 
   const payData = await payRes.json();
-
-  // ── สำคัญ: LND endpoint นี้ตอบ HTTP 200 เสมอแม้ routing ล้มเหลว ──
-  // ต้องเช็ค payment_error ในตัว body เอง ไม่ใช่แค่ HTTP status
   if (payData.payment_error) {
     throw new Error(`LND routing failed: ${payData.payment_error}`);
   }
@@ -57,6 +54,22 @@ export async function payLightningAddress(lightningAddress, amountSats) {
     throw new Error('LND payment did not return a preimage — payment likely failed');
   }
 
+  return payData;
+}
+
+export async function payInvoice(bolt11) {
+  const payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
+    method: 'POST', agent, headers,
+    body: JSON.stringify({ payment_request: bolt11 }),
+  });
+  if (!payRes.ok) throw new Error(`LND pay error: ${await payRes.text()}`);
+  const payData = await payRes.json();
+  if (payData.payment_error) {
+    throw new Error(`LND routing failed: ${payData.payment_error}`);
+  }
+  if (!payData.payment_preimage) {
+    throw new Error('LND payment did not return a preimage — payment likely failed');
+  }
   return payData;
 }
 
