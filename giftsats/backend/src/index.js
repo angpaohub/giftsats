@@ -226,8 +226,8 @@ app.post('/api/gift/create', async (req, res) => {
   try {
     const { amountSats, designCode, senderNote, senderLightningAddress } = req.body;
 
-    if (!amountSats || amountSats < 500) {
-      return res.status(400).json({ error: 'Minimum 500 sats' });
+    if (!amountSats || amountSats < 1000) {
+      return res.status(400).json({ error: 'Minimum 1000 sats' });
     }
 
     if (senderLightningAddress) {
