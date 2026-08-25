@@ -496,7 +496,7 @@ app.get('/card/:id', async (req, res) => {
   }
 });
 
-// ── Admin: create invoice (receive) ──────────────────────
+// ── Admin: create invoice (receive) — protected by ADMIN_KEY only ──
 app.post('/admin/action/create-invoice', async (req, res) => {
   const ADMIN_KEY = process.env.ADMIN_KEY;
   if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
@@ -510,10 +510,16 @@ app.post('/admin/action/create-invoice', async (req, res) => {
   }
 });
 
-// ── Admin: pay bolt11 or Lightning address (send) ────────
+// ── Admin: pay bolt11 or Lightning address — needs BOTH keys ──
+// ADMIN_KEY (URL) proves you can view the dashboard.
+// ADMIN_PAY_KEY (form field, separate secret) proves you're allowed to move funds out.
 app.post('/admin/action/pay', async (req, res) => {
   const ADMIN_KEY = process.env.ADMIN_KEY;
+  const ADMIN_PAY_KEY = process.env.ADMIN_PAY_KEY;
   if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  if (!ADMIN_PAY_KEY) return res.status(500).json({ error: 'ADMIN_PAY_KEY not set on server' });
+  if (req.body.payKey !== ADMIN_PAY_KEY) return res.status(403).json({ error: 'Wrong or missing Pay Authorization Key' });
+
   try {
     const destination = (req.body.destination || '').trim();
     const amountSats = req.body.amountSats ? parseInt(req.body.amountSats) : null;
@@ -632,6 +638,7 @@ app.get('/admin/node', async (req, res) => {
     input { width:100%; padding:8px; margin-bottom:8px; background:#0a0a0a; border:1px solid #262626; color:#f0ece4; font-family:inherit; border-radius:4px; box-sizing:border-box; }
     button { width:100%; padding:8px; background:#F7931A; color:#000; border:none; border-radius:4px; cursor:pointer; font-family:inherit; font-weight:700; }
     button:hover { opacity:0.9; }
+    .pay-key-note { font-size:10px; color:#666; margin-bottom:8px; }
   </style>
 </head>
 <body>
@@ -663,6 +670,8 @@ app.get('/admin/node', async (req, res) => {
       <div class="label" style="margin-bottom:12px;">Send (bolt11 or Lightning address)</div>
       <input id="sendDest" type="text" placeholder="lnbc... or name@domain.com">
       <input id="sendAmt" type="number" placeholder="Amount in sats (only for Lightning address)">
+      <div class="pay-key-note">Requires separate Pay Authorization Key ⬇️</div>
+      <input id="payKey" type="password" placeholder="Pay Authorization Key">
       <button onclick="sendPay()">Pay</button>
       <div id="sendResult" style="margin-top:12px; word-break:break-all; font-size:11px;"></div>
     </div>
@@ -723,6 +732,7 @@ app.get('/admin/node', async (req, res) => {
     async function sendPay() {
       const dest = document.getElementById('sendDest').value;
       const amt = document.getElementById('sendAmt').value;
+      const payKey = document.getElementById('payKey').value;
       const out = document.getElementById('sendResult');
       out.style.color = '#888';
       out.textContent = 'Sending...';
@@ -730,7 +740,7 @@ app.get('/admin/node', async (req, res) => {
         const res = await fetch('/admin/action/pay?key=' + encodeURIComponent(ADMIN_KEY_Q), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ destination: dest, amountSats: amt || undefined }),
+          body: JSON.stringify({ destination: dest, amountSats: amt || undefined, payKey }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Payment failed');
