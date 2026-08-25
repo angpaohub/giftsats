@@ -5,7 +5,7 @@ import multer from 'multer';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments } from './lnd.js';
+import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice } from './lnd.js';
 import {
   initDB, createGiftCard, getGiftCard, updateGiftCard, getStats,
   listAllCards, listExpiredUnredeemed,
@@ -496,6 +496,44 @@ app.get('/card/:id', async (req, res) => {
   }
 });
 
+// ── Admin: create invoice (receive) ──────────────────────
+app.post('/admin/action/create-invoice', async (req, res) => {
+  const ADMIN_KEY = process.env.ADMIN_KEY;
+  if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const amountSats = parseInt(req.body.amountSats);
+    if (!amountSats || amountSats < 1) return res.status(400).json({ error: 'Invalid amount' });
+    const invoice = await createInvoice(amountSats, req.body.memo || 'Admin receive');
+    res.json({ paymentRequest: invoice.payment_request });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: pay bolt11 or Lightning address (send) ────────
+app.post('/admin/action/pay', async (req, res) => {
+  const ADMIN_KEY = process.env.ADMIN_KEY;
+  if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const destination = (req.body.destination || '').trim();
+    const amountSats = req.body.amountSats ? parseInt(req.body.amountSats) : null;
+    if (!destination) return res.status(400).json({ error: 'Missing destination' });
+
+    let result;
+    if (destination.includes('@')) {
+      if (!amountSats) return res.status(400).json({ error: 'Amount required for Lightning address' });
+      result = await payLightningAddress(destination, amountSats);
+    } else if (destination.toLowerCase().startsWith('lnbc') || destination.toLowerCase().startsWith('lntb')) {
+      result = await payInvoice(destination);
+    } else {
+      return res.status(400).json({ error: 'Unrecognized destination — must be a bolt11 invoice or Lightning address' });
+    }
+    res.json({ success: true, preimage: result.payment_preimage });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Admin: node status dashboard ─────────────────────────
 app.get('/admin/node', async (req, res) => {
   const ADMIN_KEY = process.env.ADMIN_KEY;
@@ -530,7 +568,6 @@ app.get('/admin/node', async (req, res) => {
         </tr>`;
     }).join('');
 
-    // ── รวม invoice (รับเข้า) กับ payment (จ่ายออก) เป็นตารางเดียว เรียงเวลาล่าสุดก่อน ──
     const received = invoices
       .filter(inv => inv.settled)
       .map(inv => ({
@@ -554,8 +591,8 @@ app.get('/admin/node', async (req, res) => {
     const txs = [...received, ...sent].sort((a, b) => b.time - a.time).slice(0, 50);
 
     const txRows = txs.map(tx => {
-      const dateStr = new Date(tx.time).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'medium' });
-      const dirLabel = tx.direction === 'in' ? '⬇️ รับเข้า' : '⬆️ จ่ายออก';
+      const dateStr = new Date(tx.time).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'medium' });
+      const dirLabel = tx.direction === 'in' ? '⬇️ Received' : '⬆️ Sent';
       const dirColor = tx.direction === 'in' ? '#39ff14' : '#F7931A';
       const statusColor = tx.status === 'failed' ? '#ff6b6b' : (tx.status === 'succeeded' || tx.status === 'settled' ? '#39ff14' : '#888');
       return `
@@ -592,6 +629,9 @@ app.get('/admin/node', async (req, res) => {
     .refresh { color:#F7931A; text-decoration:none; font-size:11px; }
     .synced-yes { color:#39ff14; }
     .synced-no { color:#ff6b6b; }
+    input { width:100%; padding:8px; margin-bottom:8px; background:#0a0a0a; border:1px solid #262626; color:#f0ece4; font-family:inherit; border-radius:4px; box-sizing:border-box; }
+    button { width:100%; padding:8px; background:#F7931A; color:#000; border:none; border-radius:4px; cursor:pointer; font-family:inherit; font-weight:700; }
+    button:hover { opacity:0.9; }
   </style>
 </head>
 <body>
@@ -610,6 +650,24 @@ app.get('/admin/node', async (req, res) => {
     <div class="card"><div class="label">Peers</div><div class="value">${info.num_peers ?? '—'}</div></div>
   </div>
 
+  <h2>Receive / Send</h2>
+  <div class="cards" style="align-items:flex-start;">
+    <div class="card" style="min-width:280px;">
+      <div class="label" style="margin-bottom:12px;">Receive (Create Invoice)</div>
+      <input id="recvAmt" type="number" placeholder="Amount (sats)">
+      <button onclick="createInv()">Create Invoice</button>
+      <div id="recvResult" style="margin-top:12px; word-break:break-all; font-size:10px; color:#888;"></div>
+      <img id="recvQR" style="display:none; margin-top:12px; width:180px; border-radius:4px;">
+    </div>
+    <div class="card" style="min-width:280px;">
+      <div class="label" style="margin-bottom:12px;">Send (bolt11 or Lightning address)</div>
+      <input id="sendDest" type="text" placeholder="lnbc... or name@domain.com">
+      <input id="sendAmt" type="number" placeholder="Amount in sats (only for Lightning address)">
+      <button onclick="sendPay()">Pay</button>
+      <div id="sendResult" style="margin-top:12px; word-break:break-all; font-size:11px;"></div>
+    </div>
+  </div>
+
   <h2>Channels</h2>
   <table>
     <thead>
@@ -623,17 +681,67 @@ app.get('/admin/node', async (req, res) => {
     </tbody>
   </table>
 
-  <h2>Recent Transactions (50 ล่าสุด)</h2>
+  <h2>Recent Transactions (last 50)</h2>
   <table>
     <thead>
       <tr>
-        <th>เวลา</th><th>ทิศทาง</th><th>จำนวน</th><th>สถานะ</th><th>ค่าธรรมเนียม</th><th>รายละเอียด</th>
+        <th>Time</th><th>Direction</th><th>Amount</th><th>Status</th><th>Fee</th><th>Details</th>
       </tr>
     </thead>
     <tbody>
-      ${txRows || '<tr><td colspan="6" style="color:#666">ยังไม่มี transaction</td></tr>'}
+      ${txRows || '<tr><td colspan="6" style="color:#666">No transactions yet</td></tr>'}
     </tbody>
   </table>
+
+  <script>
+    const ADMIN_KEY_Q = new URLSearchParams(location.search).get('key');
+
+    async function createInv() {
+      const amt = document.getElementById('recvAmt').value;
+      const out = document.getElementById('recvResult');
+      const qr = document.getElementById('recvQR');
+      out.style.color = '#888';
+      out.textContent = 'Creating...';
+      qr.style.display = 'none';
+      try {
+        const res = await fetch('/admin/action/create-invoice?key=' + encodeURIComponent(ADMIN_KEY_Q), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amountSats: amt, memo: 'Admin receive' }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to create invoice');
+        out.textContent = data.paymentRequest;
+        qr.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(data.paymentRequest);
+        qr.style.display = 'block';
+      } catch (e) {
+        out.style.color = '#ff6b6b';
+        out.textContent = '❌ ' + e.message;
+      }
+    }
+
+    async function sendPay() {
+      const dest = document.getElementById('sendDest').value;
+      const amt = document.getElementById('sendAmt').value;
+      const out = document.getElementById('sendResult');
+      out.style.color = '#888';
+      out.textContent = 'Sending...';
+      try {
+        const res = await fetch('/admin/action/pay?key=' + encodeURIComponent(ADMIN_KEY_Q), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destination: dest, amountSats: amt || undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Payment failed');
+        out.style.color = '#39ff14';
+        out.textContent = '✅ Payment succeeded — preimage: ' + data.preimage;
+      } catch (e) {
+        out.style.color = '#ff6b6b';
+        out.textContent = '❌ ' + e.message;
+      }
+    }
+  </script>
 </body>
 </html>`);
   } catch (e) {
