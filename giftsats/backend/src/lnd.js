@@ -39,12 +39,26 @@ export async function payLightningAddress(lightningAddress, amountSats) {
   const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`, { agent });
   if (!invoiceRes.ok) throw new Error('Could not get invoice');
   const { pr } = await invoiceRes.json();
+
   const payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
     method: 'POST', agent, headers,
     body: JSON.stringify({ payment_request: pr }),
   });
   if (!payRes.ok) throw new Error(`LND pay error: ${await payRes.text()}`);
-  return payRes.json();
+
+  const payData = await payRes.json();
+
+  // ── สำคัญ: LND endpoint นี้ตอบ HTTP 200 เสมอแม้ routing ล้มเหลว ──
+  // ต้องเช็ค payment_error ในตัว body เอง ไม่ใช่แค่ HTTP status
+  if (payData.payment_error) {
+    throw new Error(`LND routing failed: ${payData.payment_error}`);
+  }
+  // เช็คซ้ำอีกชั้น: ถ้าไม่มี payment_preimage แปลว่าจ่ายไม่สำเร็จจริง
+  if (!payData.payment_preimage) {
+    throw new Error('LND payment did not return a preimage — payment likely failed');
+  }
+
+  return payData;
 }
 
 export async function getChannelBalance() {
