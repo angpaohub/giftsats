@@ -20,7 +20,7 @@ const allowedOrigins = (process.env.FRONTEND_URL || '')
   .map(s => s.trim())
   .filter(Boolean);
 
-app.use(cors({
+app.use('/api', cors({
   origin: (origin, cb) => {
     if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
       cb(null, true);
