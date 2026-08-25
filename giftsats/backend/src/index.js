@@ -5,7 +5,7 @@ import multer from 'multer';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { createInvoice, checkPayment, payLightningAddress, getChannelBalance } from './lnd.js';
+import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments } from './lnd.js';
 import {
   initDB, createGiftCard, getGiftCard, updateGiftCard, getStats,
   listAllCards, listExpiredUnredeemed,
@@ -493,6 +493,151 @@ app.get('/card/:id', async (req, res) => {
 </html>`);
   } catch (e) {
     res.redirect(302, `${process.env.FRONTEND_URL || 'https://giftsats.org'}/card/${req.params.id}`);
+  }
+});
+
+// ── Admin: node status dashboard ─────────────────────────
+app.get('/admin/node', async (req, res) => {
+  const ADMIN_KEY = process.env.ADMIN_KEY;
+  if (!ADMIN_KEY) return res.status(500).send('ADMIN_KEY not set on server');
+  if (req.query.key !== ADMIN_KEY) return res.status(403).send('Forbidden — missing or wrong ?key=');
+
+  try {
+    const [info, balance, channels, invoices, payments] = await Promise.all([
+      getNodeInfo(),
+      getChannelBalance(),
+      listChannels(),
+      listInvoices(50),
+      listPayments(50),
+    ]);
+
+    const channelRows = channels.map(ch => {
+      const cap = parseInt(ch.capacity);
+      const local = parseInt(ch.local_balance);
+      const remote = parseInt(ch.remote_balance);
+      const reserve = parseInt(ch.local_chan_reserve_sat || 0);
+      const spendable = Math.max(0, local - reserve);
+      return `
+        <tr>
+          <td>${ch.peer_alias || '(unknown)'}</td>
+          <td class="mono">${ch.active ? '🟢 active' : '🔴 inactive'}</td>
+          <td class="mono">${cap.toLocaleString()}</td>
+          <td class="mono">${local.toLocaleString()}</td>
+          <td class="mono">${remote.toLocaleString()}</td>
+          <td class="mono">${reserve.toLocaleString()}</td>
+          <td class="mono" style="color:${spendable > 0 ? '#39ff14' : '#ff6b6b'}">${spendable.toLocaleString()}</td>
+          <td class="mono">${ch.private ? 'private' : 'public'}</td>
+        </tr>`;
+    }).join('');
+
+    // ── รวม invoice (รับเข้า) กับ payment (จ่ายออก) เป็นตารางเดียว เรียงเวลาล่าสุดก่อน ──
+    const received = invoices
+      .filter(inv => inv.settled)
+      .map(inv => ({
+        time: parseInt(inv.settle_date) * 1000,
+        direction: 'in',
+        amount: parseInt(inv.amt_paid_sat || inv.value || 0),
+        memo: inv.memo || '(no memo)',
+        status: 'settled',
+      }));
+
+    const sent = payments
+      .map(p => ({
+        time: parseInt(p.creation_date) * 1000,
+        direction: 'out',
+        amount: parseInt(p.value_sat || p.value || 0),
+        memo: p.payment_request ? p.payment_request.slice(0, 20) + '...' : '(no memo)',
+        status: p.status === 'SUCCEEDED' ? 'succeeded' : (p.status === 'FAILED' ? 'failed' : p.status?.toLowerCase() || 'unknown'),
+        fee: parseInt(p.fee_sat || 0),
+      }));
+
+    const txs = [...received, ...sent].sort((a, b) => b.time - a.time).slice(0, 50);
+
+    const txRows = txs.map(tx => {
+      const dateStr = new Date(tx.time).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'medium' });
+      const dirLabel = tx.direction === 'in' ? '⬇️ รับเข้า' : '⬆️ จ่ายออก';
+      const dirColor = tx.direction === 'in' ? '#39ff14' : '#F7931A';
+      const statusColor = tx.status === 'failed' ? '#ff6b6b' : (tx.status === 'succeeded' || tx.status === 'settled' ? '#39ff14' : '#888');
+      return `
+        <tr>
+          <td class="mono">${dateStr}</td>
+          <td class="mono" style="color:${dirColor}">${dirLabel}</td>
+          <td class="mono">${tx.amount.toLocaleString()} sats</td>
+          <td class="mono" style="color:${statusColor}">${tx.status}</td>
+          <td class="mono" style="color:#666">${tx.fee ? tx.fee.toLocaleString() + ' sats' : '—'}</td>
+          <td style="color:#888; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${tx.memo}</td>
+        </tr>`;
+    }).join('');
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>GiftSats — Node Status</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background:#0a0a0a; color:#f0ece4; font-family:'JetBrains Mono','Fira Code',monospace; padding:32px; margin:0; }
+    h1 { color:#F7931A; font-size:20px; margin-bottom:4px; }
+    h2 { font-size:14px; margin:40px 0 16px; text-transform:uppercase; letter-spacing:1px; color:#888; }
+    .sub { color:#666; font-size:12px; margin-bottom:32px; }
+    .cards { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:32px; }
+    .card { background:#141414; border:1px solid #262626; border-radius:8px; padding:16px 20px; min-width:160px; }
+    .card .label { font-size:10px; color:#666; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+    .card .value { font-size:20px; font-weight:700; }
+    table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:16px; }
+    th { text-align:left; color:#666; font-size:10px; text-transform:uppercase; letter-spacing:1px; padding:8px 10px; border-bottom:1px solid #262626; }
+    td { padding:10px; border-bottom:1px solid #1a1a1a; }
+    .mono { font-family:'JetBrains Mono',monospace; }
+    .refresh { color:#F7931A; text-decoration:none; font-size:11px; }
+    .synced-yes { color:#39ff14; }
+    .synced-no { color:#ff6b6b; }
+  </style>
+</head>
+<body>
+  <h1>⚡ GiftSats Node Status</h1>
+  <div class="sub">
+    ${info.alias || '(no alias)'} · ${info.identity_pubkey?.slice(0, 16)}...
+    · block ${info.block_height?.toLocaleString()}
+    · synced: <span class="${info.synced_to_chain ? 'synced-yes' : 'synced-no'}">${info.synced_to_chain ? 'yes' : 'no'}</span>
+    &nbsp;·&nbsp; <a class="refresh" href="?key=${req.query.key}">↻ refresh</a>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="label">Total Local Balance</div><div class="value">${balance.localSats.toLocaleString()} sats</div></div>
+    <div class="card"><div class="label">Total Remote Balance</div><div class="value">${balance.remoteSats.toLocaleString()} sats</div></div>
+    <div class="card"><div class="label">Active Channels</div><div class="value">${channels.filter(c => c.active).length} / ${channels.length}</div></div>
+    <div class="card"><div class="label">Peers</div><div class="value">${info.num_peers ?? '—'}</div></div>
+  </div>
+
+  <h2>Channels</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Peer</th><th>Status</th><th>Capacity</th><th>Local</th><th>Remote</th>
+        <th>Reserve</th><th>Spendable</th><th>Type</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${channelRows || '<tr><td colspan="8" style="color:#666">No channels yet</td></tr>'}
+    </tbody>
+  </table>
+
+  <h2>Recent Transactions (50 ล่าสุด)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>เวลา</th><th>ทิศทาง</th><th>จำนวน</th><th>สถานะ</th><th>ค่าธรรมเนียม</th><th>รายละเอียด</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${txRows || '<tr><td colspan="6" style="color:#666">ยังไม่มี transaction</td></tr>'}
+    </tbody>
+  </table>
+</body>
+</html>`);
+  } catch (e) {
+    res.status(500).send(`Error loading node status: ${e.message}`);
   }
 });
 
