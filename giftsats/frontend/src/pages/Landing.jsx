@@ -60,7 +60,7 @@ function Digits({ value }) {
         alignItems: 'baseline',
         fontFamily: T.mono,
         fontWeight: 500,
-        fontSize: 'clamp(34px, 9vw, 50px)',
+        fontSize: 'clamp(26px, 7.5vw, 50px)',
         lineHeight: 1,
         letterSpacing: '-0.03em',
         fontVariantNumeric: 'tabular-nums',
@@ -172,7 +172,16 @@ function HeroCard() {
             <div style={{ flex: 1, borderTop: '1px solid rgba(199,122,18,.35)' }} />
           </div>
 
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 18, width: '100%', padding: '16px 0' }}>
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'clamp(12px, 4vw, 18px)',
+              width: '100%',
+              padding: '16px 0',
+            }}
+          >
             <div
               style={{
                 padding: 9,
@@ -183,11 +192,26 @@ function HeroCard() {
                 flex: '0 0 auto',
               }}
             >
-              <QR value="https://giftsats.org" size={88} light={T.surfaceBright} />
+              <QR
+                value="https://giftsats.org"
+                size={88}
+                light={T.surfaceBright}
+                style={{ width: 'clamp(58px, 17vw, 88px)', height: 'clamp(58px, 17vw, 88px)' }}
+              />
             </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: T.serif, fontSize: 23, lineHeight: 1.15 }}>Scan to redeem</div>
-              <div style={{ fontFamily: T.serif, fontSize: 12, color: T.text3, lineHeight: 1.4, marginTop: 9 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: T.serif, fontSize: 'clamp(18px, 5.2vw, 23px)', lineHeight: 1.15 }}>
+                Scan to redeem
+              </div>
+              <div
+                style={{
+                  fontFamily: T.serif,
+                  fontSize: 'clamp(10.5px, 2.9vw, 12px)',
+                  color: T.text3,
+                  lineHeight: 1.4,
+                  marginTop: 9,
+                }}
+              >
                 Enter your lightning address to receive sats
               </div>
             </div>
