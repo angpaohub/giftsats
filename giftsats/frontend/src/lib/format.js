@@ -1,5 +1,14 @@
 export const fmt = (n) => (Number(n) || 0).toLocaleString('en-US');
 
+// Compact form for large sat counts on the About page's stats card:
+// 2,940,000,000 -> "2.94 B", 1,280,000 -> "1.28 M", anything smaller -> fmt().
+export function fmtCompact(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)} B`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(2)} M`;
+  return fmt(v);
+}
+
 export function formatDate(value) {
   if (!value) return '';
   const d = new Date(value);

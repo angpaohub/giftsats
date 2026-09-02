@@ -225,6 +225,9 @@ export async function getStats() {
       COALESCE(SUM(amount_sats) FILTER (WHERE refund_status = 'refunded'), 0)  AS refunded_sats,
       COALESCE(SUM(amount_sats) FILTER (WHERE refund_status = 'forfeited'), 0) AS forfeited_sats,
       COALESCE(SUM(amount_sats) FILTER (WHERE status IN ('minted','redeemed')), 0) AS total_sats,
+      -- Designers keep 80% of design_fee (see DESIGNER_PLATFORM_CUT in index.js);
+      -- payout fires once the card mints, so this mirrors the total_sats filter.
+      COALESCE(SUM(FLOOR(design_fee * 0.8)) FILTER (WHERE status IN ('minted','redeemed')), 0) AS designer_payout_sats,
       (SELECT COUNT(*) FROM designs WHERE active = true)               AS active_designs
     FROM gift_cards
   `);

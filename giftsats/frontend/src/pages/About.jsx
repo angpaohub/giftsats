@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react';
 import Page from '../components/Page.jsx';
-import { T, microLabel, headline, sectionTitle } from '../components/ui.jsx';
+import { T } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
-import { fmt } from '../lib/format.js';
+import { fmt, fmtCompact, formatDate } from '../lib/format.js';
 
 const PRINCIPLES = [
   { n: '01', title: 'No accounts', body: 'Neither side signs up. The card is the only credential that matters.' },
-  {
-    n: '02',
-    title: 'Custody stated once',
-    body: 'We say where the sats sit, in one sentence, on every relevant screen.',
-  },
+  { n: '02', title: 'Single redemption', body: "A code works once. After that, it's just paper." },
   {
     n: '03',
     title: 'Designers get paid',
@@ -23,10 +19,19 @@ const PRINCIPLES = [
   },
 ];
 
-const CONTACTS = [
-  { k: 'Email', v: 'hello@giftsats.org', href: 'mailto:hello@giftsats.org' },
-  { k: 'Support', v: 'help@giftsats.org', href: 'mailto:help@giftsats.org' },
+const PERKS = [
+  ['01', 'Custom design'],
+  ['02', 'Custom expiry date'],
+  ['03', 'Custom specially for your event'],
+  ['04', 'Worldwide shipping'],
 ];
+
+const CONTACTS = [
+  { k: 'Email', v: 'giftsats.official@gmail.com', href: 'mailto:giftsats.official@gmail.com' },
+  { k: 'Nostr', v: 'Coming soon', href: null },
+];
+
+const hair14 = 'rgba(27,23,20,.14)';
 
 export default function About() {
   const [stats, setStats] = useState(null);
@@ -43,108 +48,291 @@ export default function About() {
 
   const NUMBERS = [
     { k: 'Cards created', v: created ? fmt(created) : '—' },
-    { k: 'Sats gifted', v: stats ? fmt(stats.total_sats) : '—' },
-    { k: 'Redeemed', v: redeemed ? fmt(redeemed) : '—' },
+    { k: 'Sats gifted', v: stats ? fmtCompact(stats.total_sats) : '—' },
     { k: 'Redemption rate', v: redemptionRate },
-    { k: 'Designs live', v: stats ? fmt(stats.active_designs) : '—' },
+    { k: 'Community designs live', v: stats ? fmt(stats.active_designs) : '—' },
+    {
+      k: 'Paid to designers',
+      v: stats?.designer_payout_sats != null ? `${fmtCompact(stats.designer_payout_sats)} sats` : '—',
+    },
   ];
 
   return (
-    <Page maxWidth={1080} title="About us">
-      <div style={microLabel}>About us</div>
-      <h1 style={{ ...headline, marginTop: 14, fontWeight: 400 }}>
-        A gift card that is <em>actually</em> bitcoin.
-      </h1>
-      <p style={{ fontSize: 18, color: T.text2, marginTop: 20, maxWidth: 620, lineHeight: 1.6 }}>
-        Most bitcoin gifting asks the receiver to make an account somewhere before they see a single sat. GiftSats
-        does the opposite: the card carries everything it needs, and the sats leave for a Lightning address of the
-        receiver’s choosing the moment they ask for them.
-      </p>
-
-      {/* ── Numbers ──────────────────────────────────────── */}
+    <Page title="About us">
+      {/* Hero */}
       <div
         style={{
-          marginTop: 'clamp(40px, 6vw, 64px)',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))',
-          gap: 1,
-          background: T.hair,
-          border: `1px solid ${T.hair}`,
-          borderRadius: 16,
-          overflow: 'hidden',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          gap: 32,
+          borderBottom: `1px solid ${T.hair16}`,
+          paddingBottom: 30,
         }}
       >
-        {NUMBERS.map((s) => (
-          <div key={s.k} style={{ background: T.surface, padding: '22px 20px' }}>
-            <div style={{ ...microLabel, fontSize: 10, letterSpacing: '0.18em' }}>{s.k}</div>
-            <div style={{ fontFamily: T.mono, fontSize: 26, marginTop: 12, letterSpacing: '-0.02em' }}>{s.v}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Principles ───────────────────────────────────── */}
-      <div style={{ marginTop: 'clamp(40px, 6vw, 64px)' }}>
-        <h2 style={sectionTitle}>What we hold to</h2>
         <div
           style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',
-            gap: 24,
-            marginTop: 24,
+            fontFamily: T.serif,
+            fontSize: 'clamp(34px, 7vw, 52px)',
+            lineHeight: 1.06,
+            letterSpacing: '-0.015em',
           }}
         >
-          {PRINCIPLES.map((p) => (
-            <div key={p.n}>
-              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.orangeDeep, letterSpacing: '0.14em' }}>
-                {p.n}
+          A gift card, <em style={{ fontStyle: 'italic' }}>not a lecture.</em>
+        </div>
+        <div style={{ fontSize: 15, color: T.text2, maxWidth: 380, lineHeight: 1.6 }}>
+          I'm building the friendliest way to hand someone their first bitcoin.
+        </div>
+      </div>
+
+      {/* Story + stats */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'clamp(30px, 4vw, 56px) clamp(30px, 5vw, 72px)', marginTop: 48 }}>
+        <div style={{ flex: '1 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 22 }}>
+          <div style={{ fontFamily: T.serif, fontSize: 26, lineHeight: 1.35 }}>
+            I started because handing someone sats over dinner turned into a twenty-minute conversation about seed
+            phrases.
+          </div>
+          <p style={{ fontSize: 16, color: T.text2, lineHeight: 1.65 }}>
+            In 2024 I tried to give my niece 100,000 sats for her birthday. It took an app install, a KYC queue, a
+            failed transfer, and a promise to explain custody later. The gift got lost in the setup.
+          </p>
+          <p style={{ fontSize: 16, color: T.text2, lineHeight: 1.65 }}>
+            So I made the thing I actually wanted: a card with an amount of Bitcoin and a QR for redeeming. I pay a
+            Lightning invoice, the card is minted, and the Bitcoin is gifted. That's it!
+          </p>
+          <p style={{ fontSize: 16, color: T.text2, lineHeight: 1.65 }}>
+            Redeeming isn't hard either. She scans the QR, types in a wallet address, and the sats land. No
+            accounts on either side, nothing to explain until she asks.
+          </p>
+          <p style={{ fontSize: 16, color: T.text2, lineHeight: 1.65 }}>
+            The marketplace came later, when people kept asking to use their own artwork. Designers publish a card
+            front, set a fee, and get paid in sats each time someone chooses theirs — the same rails as the gifts.
+          </p>
+        </div>
+
+        <div style={{ flex: '1 1 320px', maxWidth: '100%' }}>
+          <div style={{ border: `1px solid ${hair14}`, borderRadius: 18, background: T.surface, padding: '30px 32px' }}>
+            <div
+              style={{
+                fontFamily: T.mono,
+                fontSize: 11,
+                letterSpacing: '0.18em',
+                color: T.muted,
+                textTransform: 'uppercase',
+              }}
+            >
+              Since launch
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', marginTop: 16 }}>
+              {NUMBERS.map((s) => (
+                <div
+                  key={s.k}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    gap: 18,
+                    padding: '14px 0',
+                    borderTop: `1px solid ${T.hair}`,
+                  }}
+                >
+                  <span style={{ fontSize: 14.5, color: T.text2 }}>{s.k}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 18 }}>{s.v}</span>
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                fontFamily: T.mono,
+                fontSize: 10.5,
+                letterSpacing: '0.1em',
+                color: T.mutedWarm,
+                textTransform: 'uppercase',
+                marginTop: 16,
+              }}
+            >
+              Figures as of {formatDate(new Date())}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* For teams & events */}
+      <div
+        style={{
+          marginTop: 72,
+          borderTop: `1px solid ${T.hair16}`,
+          paddingTop: 44,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 64,
+          alignItems: 'flex-start',
+        }}
+      >
+        <div style={{ flex: '1 1 380px', minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: T.mono,
+              fontSize: 11,
+              letterSpacing: '0.18em',
+              color: T.orangeDeep,
+              textTransform: 'uppercase',
+            }}
+          >
+            For teams &amp; events
+          </div>
+          <div style={{ fontFamily: T.serif, fontSize: 34, lineHeight: 1.1, marginTop: 12 }}>
+            Want a custom physical Bitcoin gift card?
+          </div>
+          <p style={{ fontSize: 16, lineHeight: 1.6, color: T.text2, marginTop: 16, maxWidth: 420 }}>
+            Printed cards, made for your event and fulfilled on the GiftSats infrastructure.
+          </p>
+          <a
+            href="#contact"
+            className="gs-outline"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 9,
+              marginTop: 26,
+              color: T.ink,
+              padding: '15px 26px',
+              borderRadius: 999,
+              fontWeight: 600,
+              fontSize: 15,
+              border: `1px solid ${T.hair16}`,
+              textDecoration: 'none',
+            }}
+          >
+            Contact us
+          </a>
+        </div>
+        <div
+          style={{
+            flex: '1 1 460px',
+            minWidth: 0,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
+            gap: 1,
+            background: T.hair16,
+          }}
+        >
+          {PERKS.map(([n, label]) => (
+            <div key={n} style={{ background: T.canvas, padding: '26px 24px' }}>
+              <div
+                style={{
+                  fontFamily: T.mono,
+                  fontSize: 11,
+                  letterSpacing: '0.16em',
+                  color: T.muted,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {n}
               </div>
-              <div style={{ fontFamily: T.serif, fontSize: 23, marginTop: 10 }}>{p.title}</div>
-              <p style={{ fontSize: 15, color: T.text2, marginTop: 8, lineHeight: 1.6 }}>{p.body}</p>
+              <div style={{ fontSize: 17, fontWeight: 500, marginTop: 12 }}>{label}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* ── Custody note ─────────────────────────────────── */}
-      <div
-        style={{
-          marginTop: 'clamp(40px, 6vw, 64px)',
-          background: T.inkDeep,
-          color: '#F2EDE4',
-          borderRadius: 20,
-          padding: 'clamp(24px, 4vw, 36px)',
-        }}
-      >
-        <div style={{ ...microLabel, color: T.orangeHover }}>Where the sats sit</div>
-        <p style={{ fontSize: 17, marginTop: 14, maxWidth: 640, lineHeight: 1.6, color: '#C9BFB0' }}>
-          Between the invoice settling and the card being redeemed, the sats are held on the GiftSats Lightning
-          node — not in the receiver’s wallet, and not in an escrow you can inspect. That is custody, and it is
-          why cards expire after 30 days rather than sitting forever.
-        </p>
-      </div>
-
-      {/* ── Contacts ─────────────────────────────────────── */}
-      <div style={{ marginTop: 'clamp(40px, 6vw, 64px)' }}>
-        <h2 style={sectionTitle}>Reach us</h2>
-        <div style={{ marginTop: 20 }}>
-          {CONTACTS.map((c) => (
-            <div
-              key={c.k}
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 12,
-                justifyContent: 'space-between',
-                padding: '15px 0',
-                borderTop: `1px solid ${T.hair}`,
-              }}
-            >
-              <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.18em' }}>{c.k}</span>
-              <a href={c.href} className="gs-link" style={{ fontFamily: T.mono, fontSize: 14 }}>
-                {c.v}
-              </a>
+      {/* Principles */}
+      <div style={{ marginTop: 72, borderTop: `1px solid ${T.hair16}`, paddingTop: 44 }}>
+        <div
+          style={{
+            fontFamily: T.mono,
+            fontSize: 11,
+            letterSpacing: '0.18em',
+            color: T.muted,
+            textTransform: 'uppercase',
+          }}
+        >
+          Principles
+        </div>
+        <div style={{ fontFamily: T.serif, fontSize: 34, lineHeight: 1.1, marginTop: 12 }}>
+          Four things I won't trade away
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 230px), 1fr))',
+            gap: 22,
+            marginTop: 30,
+          }}
+        >
+          {PRINCIPLES.map((p) => (
+            <div key={p.n} style={{ borderTop: `1px solid ${T.hair16}`, paddingTop: 20 }}>
+              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.orangeDeep }}>{p.n}</div>
+              <div style={{ fontFamily: T.serif, fontSize: 23, lineHeight: 1.2, marginTop: 12 }}>{p.title}</div>
+              <p style={{ fontSize: 14, color: T.text2, lineHeight: 1.55, marginTop: 10 }}>{p.body}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Contact */}
+      <div style={{ marginTop: 72 }}>
+        <div
+          id="contact"
+          style={{
+            maxWidth: 480,
+            background: T.inkDeep,
+            color: '#F2EDE4',
+            borderRadius: 18,
+            padding: '34px 36px',
+            scrollMarginTop: 96,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: T.mono,
+              fontSize: 11,
+              letterSpacing: '0.18em',
+              color: '#7C7060',
+              textTransform: 'uppercase',
+            }}
+          >
+            Contact
+          </div>
+          <div style={{ fontFamily: T.serif, fontSize: 28, lineHeight: 1.2, marginTop: 12 }}>Say hello</div>
+          <div style={{ display: 'flex', flexDirection: 'column', marginTop: 18 }}>
+            {CONTACTS.map((c) => (
+              <div
+                key={c.k}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  padding: '13px 0',
+                  borderTop: '1px solid rgba(255,255,255,.12)',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: T.mono,
+                    fontSize: 10.5,
+                    letterSpacing: '0.14em',
+                    color: '#7C7060',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {c.k}
+                </span>
+                {c.href ? (
+                  <a href={c.href} style={{ fontFamily: T.mono, fontSize: 13, color: T.orangeHover }}>
+                    {c.v}
+                  </a>
+                ) : (
+                  <span style={{ fontFamily: T.mono, fontSize: 13, color: T.orangeHover }}>{c.v}</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 13.5, color: '#A89A86', lineHeight: 1.6, marginTop: 18 }}>
+            For a stuck redemption, include the card code.
+          </p>
         </div>
       </div>
     </Page>
