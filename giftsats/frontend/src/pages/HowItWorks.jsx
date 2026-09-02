@@ -9,6 +9,7 @@ const WALLETS = [
     tag: 'Easiest',
     body: 'Custodial, one-tap setup. You get a Lightning address the second you install it.',
     meta: 'iOS · Android · custodial',
+    href: 'https://www.walletofsatoshi.com/',
   },
   {
     initial: 'P',
@@ -16,6 +17,7 @@ const WALLETS = [
     tag: 'Self-custody',
     body: 'Your keys, automatic channel management. Good if you plan to hold more than pocket change.',
     meta: 'iOS · Android · non-custodial',
+    href: 'https://phoenix.acinq.co/',
   },
   {
     initial: 'B',
@@ -23,6 +25,7 @@ const WALLETS = [
     tag: 'Beginner',
     body: 'Simple account with a @blink.sv address and a built-in stablesats option.',
     meta: 'iOS · Android · custodial',
+    href: 'https://www.blink.sv/',
   },
 ];
 
@@ -141,8 +144,12 @@ export default function HowItWorks() {
           }}
         >
           {WALLETS.map((w) => (
-            <div
+            <a
               key={w.name}
+              href={w.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="gs-tile"
               style={{
                 border: `1px solid ${hair14}`,
                 borderRadius: 16,
@@ -150,6 +157,9 @@ export default function HowItWorks() {
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 12,
+                color: 'inherit',
+                textDecoration: 'none',
+                transition: 'border-color .15s',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
@@ -203,7 +213,7 @@ export default function HowItWorks() {
               >
                 {w.meta}
               </div>
-            </div>
+            </a>
           ))}
         </div>
       </div>
