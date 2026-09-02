@@ -11,6 +11,7 @@ import {
   listAllCards, listExpiredUnredeemed,
   listDesigns, getDesignByCode, createDesign, incrementDesignUseCount, takedownDesign, restoreDesign,
 } from './store.js';
+import { renderCardOgImage } from './ogImage.js';
 
 dotenv.config();
 
@@ -543,6 +544,12 @@ async function processExpiredCards() {
 }
 
 // ── OG preview for /card/:id (for crawlers) ──────────────
+// The backend's own public URL — /card/:id is proxied here from the
+// frontend's domain (see frontend/public/_redirects) so crawlers get OG tags,
+// but nothing proxies other backend paths, so the og:image URL below has to
+// point at this host directly rather than at FRONTEND_URL.
+const BACKEND_URL = (process.env.BACKEND_URL || 'https://giftsats-production.up.railway.app').trim();
+
 app.get('/card/:id', async (req, res) => {
   try {
     const card = await getGiftCard(req.params.id);
@@ -565,6 +572,10 @@ app.get('/card/:id', async (req, res) => {
     const description = card.senderNote
       ? `${escapeHtml(card.senderNote)} — Redeem your Bitcoin gift card at giftsats.org`
       : `You received a Bitcoin gift card worth ${sats} sats. Redeem instantly with any Lightning address.`;
+    // Per-card link preview: same background art, mark and amount typography
+    // as the card front, rendered server-side since crawlers never run the
+    // SPA's JS.
+    const ogImageUrl = `${BACKEND_URL}/og/card/${req.params.id}.png`;
 
     res.setHeader('Content-Type', 'text/html');
     res.send(`<!DOCTYPE html>
@@ -576,10 +587,13 @@ app.get('/card/:id', async (req, res) => {
   <meta property="og:description" content="${description}" />
   <meta property="og:url" content="${cardUrl}" />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="${frontendUrl}/og-card.png" />
+  <meta property="og:image" content="${ogImageUrl}" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="${title}" />
   <meta name="twitter:description" content="${description}" />
+  <meta name="twitter:image" content="${ogImageUrl}" />
   <meta http-equiv="refresh" content="0; url=${viewUrl}" />
 </head>
 <body>
@@ -589,6 +603,44 @@ app.get('/card/:id', async (req, res) => {
   } catch (e) {
     const base = (process.env.FRONTEND_URL || 'https://giftsats.org').split(',')[0].trim();
     res.redirect(302, `${base}/g/${req.params.id}`);
+  }
+});
+
+// Per-card link-preview image. Card art + amount are fixed once a card is
+// minted, so this is safe to cache hard — a pending (unpaid) card's preview
+// can still change until then, so those get a short cache instead.
+app.get('/og/card/:id.png', async (req, res) => {
+  try {
+    const card = await getGiftCard(req.params.id);
+    if (!card) return res.status(404).end();
+
+    // Built-in fronts are named 'giftsats-*' / legacy seed ids and need no
+    // lookup; anything else is a designer's uploaded artwork.
+    let design = null;
+    if (card.designId && !/^giftsats-/.test(card.designId)) {
+      design = await getDesignByCode(card.designId).catch(() => null);
+    }
+
+    const png = await renderCardOgImage({
+      amountSats: card.amountSats,
+      senderNote: card.senderNote,
+      recipientName: card.recipientName,
+      senderName: card.senderName,
+      designId: card.designId,
+      design,
+    });
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader(
+      'Cache-Control',
+      card.status === 'minted' || card.status === 'redeemed'
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=300'
+    );
+    res.send(png);
+  } catch (e) {
+    console.error('og image render failed:', e);
+    res.status(500).end();
   }
 });
 
