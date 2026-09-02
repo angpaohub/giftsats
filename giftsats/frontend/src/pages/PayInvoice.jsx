@@ -211,7 +211,7 @@ export default function PayInvoice() {
                     wordBreak: 'break-all',
                   }}
                 >
-                  {paymentRequest}
+                  {paymentRequest.slice(0, 44)}…{paymentRequest.slice(-8)}
                 </div>
               </div>
             </>
@@ -255,7 +255,16 @@ export default function PayInvoice() {
                 {fmt(total)} sats
               </span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12.5, color: T.mutedWarm }}>
+            <div
+              style={{
+                marginTop: 10,
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 16,
+                fontSize: 12.5,
+                color: T.mutedWarm,
+              }}
+            >
               <span>Recipient receives</span>
               <span>{fmt(amountSats)} sats</span>
             </div>
