@@ -283,7 +283,11 @@ const GiftCard = forwardRef(function GiftCard(
                   fontSize: code ? 10 : 10.5,
                   color: code ? T.ink : '#A2957F',
                   marginTop: 5,
-                  wordBreak: 'break-all',
+                  // Only the raw UUID needs a hard break — it has no spaces to
+                  // wrap on. The placeholder sentence has real words, and
+                  // break-all was slicing "settles" into "settle" + "s" on
+                  // narrow (mobile) widths. Let it wrap normally instead.
+                  wordBreak: code ? 'break-all' : 'normal',
                   lineHeight: 1.35,
                 }}
               >
