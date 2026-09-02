@@ -1,5 +1,0 @@
-# /card/:id is proxied to the backend so link previews (Slack, iMessage, X)
-# get OG tags. The backend serves those tags and then bounces real browsers to
-# /g/:id, which the SPA renders — that is why this line does not loop.
-/card/:id https://giftsats-production.up.railway.app/card/:id 200!
-/* /index.html 200
