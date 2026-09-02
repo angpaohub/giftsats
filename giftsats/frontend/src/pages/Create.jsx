@@ -22,6 +22,7 @@ const MIN_SATS = 1000;
 const SERVICE_FEE_PERCENT = 2;
 const NETWORK_FEE_SATS = 2;
 const REDEEM_DAYS = 30;
+const MESSAGE_MAX = 90;
 const DRAFT_KEY = 'giftsats_form';
 
 const empty = {
@@ -47,49 +48,78 @@ function loadDraft() {
   }
 }
 
+// A static dot pattern standing in for a QR code on the swatch's mini "back" —
+// purely decorative, echoing the real card's redeem-QR strip.
+const MINI_QR = [1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0];
+
 // A mini version of the card front, used for the design swatches.
 function Swatch({ art, active, onClick, name, author }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={active ? undefined : 'gs-tile'}
       style={{
         padding: '12px 12px 14px',
         borderRadius: 12,
         textAlign: 'left',
-        background: T.surface,
+        background: active ? 'rgba(247,147,26,.08)' : T.surface,
         border: active ? `1.5px solid ${T.orange}` : `1px solid ${T.hair16}`,
-        boxShadow: active ? '0 0 0 3px rgba(247,147,26,.14)' : 'none',
         transition: 'border-color .15s',
         flex: '1 1 130px',
         minWidth: 118,
       }}
     >
-      <div
-        style={{
-          height: 74,
-          borderRadius: 8,
-          padding: '9px 9px 10px',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          // Built-in fronts are gradients; uploads are images. Compose the one
-          // shorthand rather than leaving an undefined background-image behind.
-          background: art.image ? `#15120F url(${art.image}) center/cover` : art.bg,
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontFamily: T.mono, fontSize: 5, letterSpacing: '0.24em', color: art.muted }}>
-            GIFTSATS
-          </span>
-          <Bolt size={7} color={art.mark} />
+      <div style={{ borderRadius: 9, overflow: 'hidden', border: `1px solid ${T.hair16}` }}>
+        <div
+          style={{
+            height: 74,
+            padding: '9px 9px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            // Built-in fronts are gradients; uploads are images. Compose the one
+            // shorthand rather than leaving an undefined background-image behind.
+            background: art.image ? `#15120F url(${art.image}) center/cover` : art.bg,
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontFamily: T.mono, fontSize: 5, letterSpacing: '0.24em', color: art.muted }}>
+              GIFTSATS
+            </span>
+            <Bolt size={7} color={art.mark} />
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 500, color: art.amount }}>21,000</div>
         </div>
-        <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 500, color: art.amount }}>21,000</div>
+        {/* Mini "back" strip, echoing the real card's redeem-QR block. */}
+        <div style={{ background: T.surfaceWarm, padding: '8px 9px', display: 'flex', alignItems: 'center', gap: 7 }}>
+          <div
+            style={{
+              width: 22,
+              height: 22,
+              background: T.surfaceBright,
+              border: `1px solid ${T.hair}`,
+              borderRadius: 3,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(5, 3.4px)',
+              gridAutoRows: '3.4px',
+              alignContent: 'center',
+              justifyContent: 'center',
+              gap: 0.6,
+            }}
+          >
+            {MINI_QR.map((on, i) => (
+              <div key={i} style={{ background: on ? T.inkDeep : 'transparent' }} />
+            ))}
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ height: 2, background: 'rgba(27,23,20,.22)', borderRadius: 2 }} />
+            <div style={{ height: 2, width: '70%', background: 'rgba(27,23,20,.14)', borderRadius: 2 }} />
+          </div>
+        </div>
       </div>
-      <div style={{ fontFamily: T.serif, fontSize: 16, marginTop: 9 }}>{name}</div>
-      <div style={{ fontFamily: T.mono, fontSize: 10, color: T.muted, marginTop: 2 }}>{author}</div>
+      <div style={{ fontFamily: T.serif, fontWeight: 600, fontSize: 14.5, marginTop: 11 }}>{name}</div>
+      <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted, marginTop: 4 }}>{author}</div>
     </button>
   );
 }
@@ -148,7 +178,7 @@ export default function Create() {
     ? `Minimum ${fmt(MIN_SATS)} sats.`
     : !refundOk
       ? 'That refund address does not look like a Lightning address.'
-      : 'Nothing is charged until you pay the invoice.';
+      : 'Pay the Lightning invoice on the next step — no account needed.';
 
   async function handleSubmit() {
     if (!ready) return;
@@ -177,15 +207,110 @@ export default function Create() {
 
   return (
     <Page footer={false} maxWidth={1180} title="Create a gift">
-      <div style={{ ...microLabel }}>Step 1 of 2</div>
-      <h1 style={{ ...headline, marginTop: 14, fontWeight: 400 }}>
-        Create a <em>gift.</em>
-      </h1>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          gap: 24,
+          borderBottom: `1px solid ${T.hair16}`,
+          paddingBottom: 30,
+        }}
+      >
+        <h1 style={{ ...headline, fontWeight: 400 }}>
+          Create a <em>gift card.</em>
+        </h1>
+        <div style={{ fontSize: 15, color: T.text2, maxWidth: 360, lineHeight: 1.6 }}>
+          Bitcoin gift cards powered by Lightning. The card is minted the moment your invoice settles.
+        </div>
+      </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'clamp(28px, 4vw, 56px)', marginTop: 40 }}>
         {/* ── Form ───────────────────────────────────────── */}
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 30 }}>
           <div>
+            <Label>Choose design</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {BUILT_IN.map((d) => (
+                <Swatch
+                  key={d.id}
+                  art={d}
+                  name={d.name}
+                  author={d.author}
+                  active={!marketDesign && form.designId === d.id}
+                  onClick={() => set({ designId: d.id, code: '' })}
+                />
+              ))}
+            </div>
+
+            <div style={{ marginTop: 30 }}>
+              <Label>
+                Marketplace design code <span style={{ color: '#B7AB99' }}>(optional)</span>
+              </Label>
+              <Input
+                placeholder="gfts-a3x9k — paste code from Explore"
+                value={form.code}
+                onChange={(e) => set({ code: e.target.value.trim() })}
+                style={{ fontFamily: T.mono, fontSize: 14 }}
+              />
+              {codeState === 'loading' && (
+                <div style={{ marginTop: 12, fontSize: 13, color: T.mutedWarm }}>Looking up that code…</div>
+              )}
+              {codeState === 'bad' && (
+                <div style={{ marginTop: 12, fontSize: 13, color: '#B3341E' }}>No design with that code.</div>
+              )}
+              {codeState === 'ok' && marketDesign && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginTop: 12,
+                    padding: '11px 14px',
+                    borderRadius: 10,
+                    border: `1.5px solid ${T.orange}`,
+                    background: 'rgba(247,147,26,.08)',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 38,
+                      height: 26,
+                      borderRadius: 5,
+                      flexShrink: 0,
+                      background: art.image ? `#15120F url(${art.image}) center/cover` : art.bg,
+                      border: `1px solid ${T.hair16}`,
+                    }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{marketDesign.name}</div>
+                    <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.mutedWarm, marginTop: 3 }}>
+                      {marketDesign.designerName ? `by ${marketDesign.designerName}` : 'by GiftSats'} · applied to
+                      preview
+                    </div>
+                  </div>
+                  <span
+                    onClick={() => set({ code: '' })}
+                    style={{
+                      fontFamily: T.mono,
+                      fontSize: 11,
+                      letterSpacing: '0.1em',
+                      color: T.orangeDeep,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    REMOVE
+                  </span>
+                </div>
+              )}
+              <div style={{ fontSize: 13, color: T.mutedWarm, marginTop: 9 }}>
+                Browse designs at <Link to="/explore">giftsats.org/explore</Link>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ borderTop: `1px solid ${T.hair16}`, paddingTop: 26 }}>
             <Label>Amount</Label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
               {PRESETS.map((p) => {
@@ -212,61 +337,51 @@ export default function Create() {
                 );
               })}
             </div>
-            <Input
-              type="number"
-              inputMode="numeric"
-              min={MIN_SATS}
-              placeholder="Custom amount in sats"
-              value={form.custom}
-              onChange={(e) => set({ custom: e.target.value, amount: Number(e.target.value) || 0 })}
-              style={{ fontFamily: T.mono }}
-            />
-          </div>
-
-          <div>
-            <Label hint="or paste a design code from Explore">Design</Label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {BUILT_IN.map((d) => (
-                <Swatch
-                  key={d.id}
-                  art={d}
-                  name={d.name}
-                  author={d.author}
-                  active={!marketDesign && form.designId === d.id}
-                  onClick={() => set({ designId: d.id, code: '' })}
-                />
-              ))}
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <Input
-                placeholder="gfts-a3x9k"
-                value={form.code}
-                onChange={(e) => set({ code: e.target.value.trim() })}
-                style={{ fontFamily: T.mono, fontSize: 14 }}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '13px 16px',
+                borderRadius: 10,
+                border: `1px dashed ${T.hair16}`,
+                background: T.surface,
+              }}
+            >
+              <input
+                type="number"
+                inputMode="numeric"
+                min={MIN_SATS}
+                placeholder="Custom amount"
+                value={form.custom}
+                onChange={(e) => set({ custom: e.target.value, amount: Number(e.target.value) || 0 })}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  fontFamily: T.mono,
+                  fontSize: 16,
+                  color: T.ink,
+                  padding: 0,
+                }}
               />
-              <div style={{ marginTop: 8, fontSize: 13, color: T.mutedWarm }}>
-                {codeState === 'loading' && 'Looking up that code…'}
-                {codeState === 'bad' && <span style={{ color: '#B3341E' }}>No design with that code.</span>}
-                {codeState === 'ok' && marketDesign && (
-                  <span style={{ color: T.successText }}>
-                    {marketDesign.name} {marketDesign.designerName ? `· by ${marketDesign.designerName}` : ''}
-                    {marketDesign.priceSats > 0 ? ` · +${fmt(marketDesign.priceSats)} sats` : ' · free'}
-                  </span>
-                )}
-                {codeState === 'idle' && (
-                  <>
-                    Browse community fronts on <Link to="/explore">Explore</Link>.
-                  </>
-                )}
-              </div>
+              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.muted }}>sats</span>
             </div>
           </div>
 
-          <div>
-            <Label>Message</Label>
+          <div style={{ borderTop: `1px solid ${T.hair16}`, paddingTop: 26 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 9 }}>
+              <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>
+                Message <span style={{ color: '#B7AB99' }}>(optional)</span>
+              </span>
+              <span style={{ ...microLabel, fontSize: 11, letterSpacing: 0 }}>
+                {form.message.length}/{MESSAGE_MAX}
+              </span>
+            </div>
             <Textarea
               rows={3}
-              maxLength={140}
+              maxLength={MESSAGE_MAX}
               placeholder="Happy birthday — stay humble."
               value={form.message}
               onChange={(e) => set({ message: e.target.value })}
@@ -276,36 +391,48 @@ export default function Create() {
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
             <div style={{ flex: '1 1 180px' }}>
-              <Label>To</Label>
+              <div style={{ marginBottom: 9 }}>
+                <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>
+                  From <span style={{ color: '#B7AB99' }}>(optional)</span>
+                </span>
+              </div>
               <Input
                 maxLength={40}
-                placeholder="Ploy"
-                value={form.to}
-                onChange={(e) => set({ to: e.target.value })}
+                placeholder="Sender name"
+                value={form.from}
+                onChange={(e) => set({ from: e.target.value })}
               />
             </div>
             <div style={{ flex: '1 1 180px' }}>
-              <Label>From</Label>
+              <div style={{ marginBottom: 9 }}>
+                <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>
+                  To <span style={{ color: '#B7AB99' }}>(optional)</span>
+                </span>
+              </div>
               <Input
                 maxLength={40}
-                placeholder="Nan"
-                value={form.from}
-                onChange={(e) => set({ from: e.target.value })}
+                placeholder="Recipient name"
+                value={form.to}
+                onChange={(e) => set({ to: e.target.value })}
               />
             </div>
           </div>
 
           <div>
-            <Label hint="optional">Refund address</Label>
+            <div style={{ marginBottom: 9 }}>
+              <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>
+                Refund address <span style={{ color: '#B7AB99' }}>(optional)</span>
+              </span>
+            </div>
             <Input
-              placeholder="you@walletofsatoshi.com"
+              placeholder="your@lightning.address"
               value={form.refund}
               onChange={(e) => set({ refund: e.target.value })}
               style={{ fontFamily: T.mono, fontSize: 14 }}
             />
             <div style={{ marginTop: 8, fontSize: 13, color: T.mutedWarm, lineHeight: 1.5 }}>
-              A card is redeemable for {REDEEM_DAYS} days. If nobody redeems it, the sats go back to this
-              address — leave it blank and they are forfeited.
+              If not redeemed within {REDEEM_DAYS} days, sats are refunded here. Leave blank to forfeit to the
+              platform.
             </div>
           </div>
 
@@ -313,11 +440,9 @@ export default function Create() {
           <div
             style={{
               background: T.surface,
-              border: `1px solid ${T.hair}`,
-              borderRadius: 16,
-              padding: '18px 20px',
-              fontFamily: T.mono,
-              fontSize: 13.5,
+              border: '1px solid rgba(27,23,20,.14)',
+              borderRadius: 14,
+              padding: '22px 24px',
             }}
           >
             {[
@@ -326,22 +451,28 @@ export default function Create() {
               ['Network fee', `${fmt(NETWORK_FEE_SATS)} sats`],
               ...(designFee > 0 ? [[`Design fee · ${marketDesign.name}`, `${fmt(designFee)} sats`]] : []),
             ].map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 9 }}>
+              <div
+                key={k}
+                style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 11, fontSize: 14.5 }}
+              >
                 <span style={{ color: T.text2 }}>{k}</span>
-                <span style={{ color: T.ink }}>{v}</span>
+                <span style={{ fontFamily: T.mono, color: T.ink }}>{v}</span>
               </div>
             ))}
             <div
               style={{
                 borderTop: `1px solid ${T.hair}`,
-                paddingTop: 12,
+                paddingTop: 13,
                 display: 'flex',
                 justifyContent: 'space-between',
+                alignItems: 'baseline',
                 gap: 16,
               }}
             >
-              <span style={{ color: T.ink, fontWeight: 500 }}>Total</span>
-              <span style={{ color: T.ink, fontWeight: 500 }}>{fmt(total)} sats</span>
+              <span style={{ color: T.ink, fontWeight: 600, fontSize: 16 }}>Total to pay</span>
+              <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.orangeDeep }}>
+                {fmt(total)} sats
+              </span>
             </div>
           </div>
 
