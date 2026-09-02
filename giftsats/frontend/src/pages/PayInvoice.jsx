@@ -96,8 +96,7 @@ export default function PayInvoice() {
 
   return (
     <Page footer={false} maxWidth={1180} title="Pay the invoice">
-      <div style={microLabel}>Step 2 of 2</div>
-      <h1 style={{ ...headline, marginTop: 14, fontWeight: 400 }}>
+      <h1 style={{ ...headline, fontWeight: 400 }}>
         Pay the <em>invoice.</em>
       </h1>
 
