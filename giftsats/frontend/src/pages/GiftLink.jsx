@@ -1,13 +1,77 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
-import { T, Input, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
+import { T, Bolt, Input, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
 import { useCard } from '../lib/useCard.js';
 import { api } from '../lib/api.js';
-import { cardUrl, fmt, isLightningAddress } from '../lib/format.js';
+import { cardUrl, fmt, formatDate, isLightningAddress } from '../lib/format.js';
 
-const WALLET_DOMAINS = ['@walletofsatoshi.com', '@phoenixwallet.me', '@getalby.com'];
+// Send people straight to the store listing for their platform. Desktop
+// visitors (no store to send them to) land on the wallet's own site instead.
+const WALLET_LINKS = {
+  wos: {
+    ios: 'https://apps.apple.com/us/app/wallet-of-satoshi/id1438599608',
+    android: 'https://play.google.com/store/apps/details?id=com.livingroomofsatoshi.wallet',
+    fallback: 'https://www.walletofsatoshi.com/',
+  },
+  phoenix: {
+    ios: 'https://apps.apple.com/us/app/phoenix-wallet/id1544097028',
+    android: 'https://play.google.com/store/apps/details?id=fr.acinq.phoenix.mainnet',
+    fallback: 'https://github.com/ACINQ/phoenix',
+  },
+};
+
+function walletDownloadUrl(kind) {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent || navigator.vendor || '' : '';
+  const links = WALLET_LINKS[kind];
+  if (/iPad|iPhone|iPod/.test(ua)) return links.ios;
+  if (/android/i.test(ua)) return links.android;
+  return links.fallback;
+}
+
+// A quiet, centred mark instead of the full site header — this page is a
+// one-off destination someone lands on from a link, not site navigation.
+function MiniLogo() {
+  return (
+    <Link
+      to="/"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        padding: '26px 0 30px',
+        color: 'inherit',
+        textDecoration: 'none',
+      }}
+    >
+      <span
+        style={{
+          position: 'relative',
+          borderRadius: 10,
+          background: T.inkDeep,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          height: 32,
+          width: 32,
+          flex: '0 0 32px',
+        }}
+      >
+        <span style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 1.5, background: 'rgba(247,147,26,.5)' }} />
+        <span style={{ position: 'absolute', top: 0, bottom: 0, left: '50%', width: 1.5, background: 'rgba(247,147,26,.5)' }} />
+        <span style={{ position: 'relative' }}>
+          <Bolt size={14} color={T.orange} />
+        </span>
+      </span>
+      <span style={{ fontFamily: T.serif, fontWeight: 500, fontSize: 24, letterSpacing: '-0.02em' }}>
+        Gift<span style={{ color: T.orangeDeep }}>sats</span>
+      </span>
+    </Link>
+  );
+}
 
 export default function GiftLink() {
   const { id } = useParams();
@@ -15,6 +79,21 @@ export default function GiftLink() {
   const [address, setAddress] = useState('');
   const [phase, setPhase] = useState('ready'); // ready | sending | done
   const [failure, setFailure] = useState('');
+  const [showQr, setShowQr] = useState(false);
+
+  // Lock the page behind the modal and let Escape close it, like any other
+  // overlay on the site.
+  useEffect(() => {
+    if (!showQr) return undefined;
+    const onKey = (e) => e.key === 'Escape' && setShowQr(false);
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [showQr]);
 
   async function redeem() {
     if (!card || !isLightningAddress(address)) return;
@@ -44,7 +123,8 @@ export default function GiftLink() {
 
   if (loading) {
     return (
-      <Page footer={false} maxWidth={720} title="A gift for you">
+      <Page footer={false} header={false} maxWidth={720} title="A gift for you">
+        <MiniLogo />
         <div style={microLabel}>Loading…</div>
       </Page>
     );
@@ -52,7 +132,8 @@ export default function GiftLink() {
 
   if (error || !card) {
     return (
-      <Page footer={false} maxWidth={720} title="A gift for you">
+      <Page footer={false} header={false} maxWidth={720} title="A gift for you">
+        <MiniLogo />
         <Notice tone="bad">{error || 'Gift card not found'}</Notice>
       </Page>
     );
@@ -66,8 +147,9 @@ export default function GiftLink() {
   const from = (card.senderName || '').trim();
 
   return (
-    <Page footer={false} maxWidth={860} title="A gift for you">
+    <Page footer={false} header={false} maxWidth={860} title="A gift for you">
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+        <MiniLogo />
         <div style={microLabel}>{done ? 'Redeemed' : 'A gift for you'}</div>
         <h1 style={{ ...headline, marginTop: 16, fontWeight: 400 }}>
           {done ? (
@@ -109,15 +191,16 @@ export default function GiftLink() {
           />
           <div style={{ position: 'relative', animation: 'gsFloat 7s ease-in-out 1s infinite' }}>
             <GiftCard
+              variant="simple"
               amount={card.amountSats}
               message={card.senderNote}
               to={card.recipientName}
               from={card.senderName}
               art={art}
-              code={card.id}
               expiresAt={card.expiresAt}
-              qrValue={cardUrl(card.id)}
-              locked={pending}
+              statusLabel={done || alreadyRedeemed ? 'Redeemed' : 'Ready to redeem'}
+              statusColor={done || alreadyRedeemed ? T.mutedWarm : T.success}
+              onShowQr={() => setShowQr(true)}
             />
           </div>
         </div>
@@ -151,28 +234,6 @@ export default function GiftLink() {
                 onChange={(e) => setAddress(e.target.value)}
                 style={{ fontFamily: T.mono, fontSize: 14.5 }}
               />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                {WALLET_DOMAINS.map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    className="gs-outline"
-                    onClick={() => setAddress((a) => `${a.split('@')[0] || 'you'}${d}`)}
-                    style={{
-                      fontFamily: T.mono,
-                      fontSize: 12,
-                      padding: '7px 12px',
-                      borderRadius: 999,
-                      border: `1px solid ${T.hair16}`,
-                      color: T.text2,
-                      transition: 'border-color .15s',
-                    }}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-
               {failure && (
                 <div style={{ marginTop: 14 }}>
                   <Notice tone="bad">{failure}</Notice>
@@ -191,6 +252,117 @@ export default function GiftLink() {
                   ? 'Sats leave the card the moment you tap.'
                   : 'Enter a valid Lightning address.'}
               </div>
+
+              <div style={{ marginTop: 22, borderTop: `1px solid ${T.hair16}`, paddingTop: 20 }}>
+                <div style={{ fontWeight: 600, fontSize: 15 }}>No wallet yet?</div>
+                <div style={{ fontSize: 13.5, color: T.text2, lineHeight: 1.6, marginTop: 7 }}>
+                  Install one free, get a Lightning address, then come back to this link. The sats stay here until{' '}
+                  {formatDate(card.expiresAt)}.
+                </div>
+
+                <a
+                  href={walletDownloadUrl('wos')}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    marginTop: 14,
+                    border: `1.5px solid ${T.orange}`,
+                    background: 'rgba(247,147,26,.08)',
+                    borderRadius: 12,
+                    padding: '15px 17px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 14,
+                    flexWrap: 'wrap',
+                    color: 'inherit',
+                    textDecoration: 'none',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>Wallet of Satoshi</div>
+                    <div style={{ fontSize: 13, color: T.text2, marginTop: 4 }}>
+                      Easiest start — install, and you have a Lightning address.
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: T.mono,
+                      fontSize: 10,
+                      letterSpacing: '0.16em',
+                      color: T.orangeDeep,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    RECOMMENDED
+                  </span>
+                </a>
+
+                <a
+                  href={walletDownloadUrl('phoenix')}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    marginTop: 10,
+                    border: `1px solid ${T.hair16}`,
+                    background: T.surface,
+                    borderRadius: 12,
+                    padding: '15px 17px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 14,
+                    flexWrap: 'wrap',
+                    color: 'inherit',
+                    textDecoration: 'none',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>Phoenix</div>
+                    <div style={{ fontSize: 13, color: T.text2, marginTop: 4 }}>
+                      Self-custodial — you hold the keys, still one tap to redeem.
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: T.mono,
+                      fontSize: 10,
+                      letterSpacing: '0.16em',
+                      color: T.mutedWarm,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    YOUR KEYS
+                  </span>
+                </a>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap', marginTop: 12 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: '0.12em', color: T.muted }}>
+                    ALSO WORKS
+                  </span>
+                  {['Zeus', 'Alby'].map((w) => (
+                    <span
+                      key={w}
+                      style={{
+                        fontFamily: T.mono,
+                        fontSize: 11.5,
+                        color: T.text2,
+                        border: `1px solid ${T.hair16}`,
+                        borderRadius: 999,
+                        padding: '7px 13px',
+                      }}
+                    >
+                      {w}
+                    </span>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <Link to="/how-it-works" className="gs-link" style={{ fontSize: 13.5, color: T.orangeDeep }}>
+                    How Lightning gifts work →
+                  </Link>
+                </div>
+              </div>
             </>
           )}
 
@@ -200,7 +372,73 @@ export default function GiftLink() {
             </Link>
           </div>
         </div>
+
+        <div style={{ fontFamily: T.mono, fontSize: 10.5, letterSpacing: '0.12em', color: T.muted, marginTop: 34 }}>
+          CARD {card.id}
+        </div>
       </div>
+
+      {showQr && (
+        <div
+          onClick={() => setShowQr(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100,
+            background: 'rgba(21,18,15,.55)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            overflowY: 'auto',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ position: 'relative', width: 'min(460px, 100%)', animation: 'gsCardIn .3s ease both' }}
+          >
+            <button
+              type="button"
+              onClick={() => setShowQr(false)}
+              aria-label="Close"
+              style={{
+                position: 'absolute',
+                top: -16,
+                right: -16,
+                zIndex: 1,
+                width: 34,
+                height: 34,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                background: T.surfaceBright,
+                border: `1px solid ${T.hair16}`,
+                boxShadow: '0 6px 16px rgba(21,18,15,.3)',
+                color: T.text2,
+                fontSize: 15,
+                lineHeight: 1,
+                cursor: 'pointer',
+              }}
+            >
+              ✕
+            </button>
+            {/* Same card as it renders on Card Ready: the full front+back,
+                fully unlocked — this is just another look at a live card. */}
+            <GiftCard
+              amount={card.amountSats}
+              message={card.senderNote}
+              to={card.recipientName}
+              from={card.senderName}
+              art={art}
+              code={card.id}
+              expiresAt={card.expiresAt}
+              qrValue={cardUrl(card.id)}
+            />
+          </div>
+        </div>
+      )}
     </Page>
   );
 }

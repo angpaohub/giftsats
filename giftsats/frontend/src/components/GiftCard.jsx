@@ -9,7 +9,25 @@ import { fmt, formatDate } from '../lib/format.js';
  * Gift Link and Redeem.
  */
 const GiftCard = forwardRef(function GiftCard(
-  { amount, message, to, from, art, code, expiresAt, qrValue, locked = false, style },
+  {
+    amount,
+    message,
+    to,
+    from,
+    art,
+    code,
+    expiresAt,
+    qrValue,
+    locked = false,
+    style,
+    // `variant="simple"` swaps the printed QR back for a slim status strip —
+    // used on Gift Link, where the full card-back is one tap away instead
+    // (see `onShowQr`). Every other page keeps the default front+back card.
+    variant = 'full',
+    statusLabel,
+    statusColor,
+    onShowQr,
+  },
   ref
 ) {
   const credit = [to && `For ${to}`, from && `from ${from}`].filter(Boolean).join(' · ');
@@ -106,6 +124,55 @@ const GiftCard = forwardRef(function GiftCard(
       </div>
 
       {/* ── Back: printed side ──────────────────────────── */}
+      {variant === 'simple' ? (
+        <div
+          style={{
+            background: T.surfaceWarm,
+            color: T.ink,
+            padding: '16px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+            borderTop: `1px solid ${T.hair}`,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: '0.2em', color: '#A2957F' }}>STATUS</div>
+            <div style={{ fontFamily: T.mono, fontSize: 12, color: statusColor || T.ink, marginTop: 5 }}>
+              {statusLabel}
+            </div>
+          </div>
+          {onShowQr && (
+            <button
+              type="button"
+              onClick={onShowQr}
+              className="gs-outline"
+              style={{
+                fontFamily: T.mono,
+                fontSize: 11,
+                letterSpacing: '0.06em',
+                padding: '9px 15px',
+                borderRadius: 999,
+                border: `1px solid ${T.hair16}`,
+                background: T.surfaceBright,
+                color: T.orangeDeep,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flex: '0 0 auto',
+              }}
+            >
+              Show QR
+            </button>
+          )}
+          <div style={{ textAlign: 'right', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
+            <div style={{ fontFamily: T.mono, fontSize: 9, letterSpacing: '0.2em', color: '#A2957F' }}>REDEEM BY</div>
+            <div style={{ fontFamily: T.mono, fontSize: 12, color: T.ink, marginTop: 5 }}>
+              {formatDate(expiresAt) || '—'}
+            </div>
+          </div>
+        </div>
+      ) : (
       <div
         style={{
           position: 'relative',
@@ -234,6 +301,7 @@ const GiftCard = forwardRef(function GiftCard(
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 });
