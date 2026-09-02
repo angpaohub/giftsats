@@ -153,7 +153,7 @@ const GiftCard = forwardRef(function GiftCard(
               }}
             >
               <div style={{ filter: locked ? 'blur(6px)' : 'none', transition: 'filter .5s ease' }}>
-                <QR value={qrValue || 'giftsats'} size={105} light={T.surfaceBright} />
+                <QR value={qrValue || 'giftsats'} size={105} light={T.surfaceBright} logo="/qr-mark.png" />
               </div>
               {locked && (
                 <div
@@ -184,11 +184,11 @@ const GiftCard = forwardRef(function GiftCard(
                 </div>
               )}
             </div>
-            <div style={{ flex: '1 1 168px', minWidth: 152 }}>
+            <div style={{ flex: '1 1 230px', minWidth: 210 }}>
               <div style={{ fontFamily: T.serif, fontSize: 'clamp(20px,4.6vw,23px)', lineHeight: 1.15 }}>
                 Scan to redeem
               </div>
-              <div style={{ fontSize: 13.5, color: T.text3, lineHeight: 1.4, marginTop: 8, maxWidth: '24ch' }}>
+              <div style={{ fontSize: 13, color: T.text3, lineHeight: 1.4, marginTop: 8, whiteSpace: 'nowrap' }}>
                 Enter your lightning address to receive sats
               </div>
             </div>

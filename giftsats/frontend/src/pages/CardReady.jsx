@@ -1,11 +1,10 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
-import CopyButton from '../components/CopyButton.jsx';
-import { T, GhostButton, Notice, microLabel, headline } from '../components/ui.jsx';
+import { T, GhostButton, Textarea, Notice, microLabel, headline } from '../components/ui.jsx';
 import { useCard } from '../lib/useCard.js';
-import { cardUrl, fmt } from '../lib/format.js';
+import { cardUrl, fmt, copy } from '../lib/format.js';
 
 const SHARE_TARGETS = [
   { name: 'Message', hint: 'SMS / iMessage' },
@@ -19,6 +18,12 @@ export default function CardReady() {
   const { card, art, error, loading } = useCard(id, { poll: true });
   const cardRef = useRef(null);
   const [busy, setBusy] = useState('');
+  const [customCopyText, setCustomCopyText] = useState(null);
+  const [editingCopy, setEditingCopy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const copiedTimer = useRef(null);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   async function renderCanvas() {
     const { default: html2canvas } = await import('html2canvas');
@@ -88,6 +93,16 @@ export default function CardReady() {
   }
 
   const link = cardUrl(card.id);
+  const defaultCopyText = `🎁 I'm sending you a Bitcoin gift card worth ${fmt(card.amountSats)} sats!\n\nRedeem it here: ${link}`;
+  const copyText = customCopyText ?? defaultCopyText;
+
+  async function copyGiftLink() {
+    const ok = await copy(copyText);
+    if (!ok) return;
+    setCopied(true);
+    clearTimeout(copiedTimer.current);
+    copiedTimer.current = setTimeout(() => setCopied(false), 1600);
+  }
 
   return (
     <Page footer={false} maxWidth={1180} title="Your card is live">
@@ -117,21 +132,6 @@ export default function CardReady() {
       </h1>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'clamp(28px, 4vw, 56px)', marginTop: 40 }}>
-        <div style={{ flex: '1 1 330px', minWidth: 0, animation: 'gsRise .6s ease .12s both' }}>
-          <div ref={cardRef} style={{ background: T.canvas }}>
-            <GiftCard
-              amount={card.amountSats}
-              message={card.senderNote}
-              to={card.recipientName}
-              from={card.senderName}
-              art={art}
-              code={card.id}
-              expiresAt={card.expiresAt}
-              qrValue={link}
-            />
-          </div>
-        </div>
-
         <div
           style={{
             flex: '1 1 380px',
@@ -139,67 +139,148 @@ export default function CardReady() {
             display: 'flex',
             flexDirection: 'column',
             gap: 26,
-            animation: 'gsRise .6s ease .24s both',
+            animation: 'gsRise .6s ease .12s both',
           }}
         >
           <div>
-            <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>Share link</div>
-            <div
+            <button
+              type="button"
+              onClick={copyGiftLink}
+              className="gs-cta-btn gs-no-print"
               style={{
+                display: 'flex',
+                width: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '16px 20px',
+                borderRadius: 999,
+                fontWeight: 600,
+                fontSize: 16,
+                color: copied ? T.successText : T.ink,
+                background: copied ? T.successFill : T.orange,
+                border: copied ? `1px solid ${T.successBorder}` : 'none',
+                boxShadow: copied ? 'none' : '0 12px 24px -10px rgba(247,147,26,.5)',
+                transition: 'background .15s',
+              }}
+            >
+              {copied ? 'Copied!' : 'Copy gift link'}
+            </button>
+
+            <div className="gs-no-print" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+              <GhostButton onClick={downloadPng} style={{ width: '100%' }}>
+                {busy === 'png' ? 'Rendering…' : 'Download PNG'}
+              </GhostButton>
+              <GhostButton onClick={() => window.print()} style={{ width: '100%' }}>
+                Print card
+              </GhostButton>
+              <GhostButton onClick={() => setShareOpen((v) => !v)} style={{ width: '100%' }}>
+                Share to recipient
+              </GhostButton>
+            </div>
+
+            {shareOpen && (
+              <div
+                className="gs-no-print"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
+                  gap: 10,
+                  marginTop: 10,
+                }}
+              >
+                {SHARE_TARGETS.map((t) => (
+                  <button
+                    key={t.name}
+                    type="button"
+                    onClick={share}
+                    className="gs-tile"
+                    style={{
+                      textAlign: 'left',
+                      border: `1px solid ${T.hair16}`,
+                      background: T.surface,
+                      borderRadius: 12,
+                      padding: '15px 17px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontSize: 14.5, fontWeight: 500, color: T.ink }}>{t.name}</div>
+                    <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted, marginTop: 5 }}>{t.hint}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              background: T.surface,
+              border: `1px solid ${T.hair}`,
+              borderRadius: 16,
+              padding: '16px 18px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>What gets copied</span>
+              <button
+                type="button"
+                onClick={() => setEditingCopy((v) => !v)}
+                style={{
+                  fontFamily: T.mono,
+                  fontSize: 11,
+                  letterSpacing: '0.1em',
+                  color: T.orangeDeep,
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                }}
+              >
+                {editingCopy ? 'DONE' : 'EDIT'}
+              </button>
+            </div>
+            {editingCopy ? (
+              <Textarea
+                rows={4}
+                value={copyText}
+                onChange={(e) => setCustomCopyText(e.target.value)}
+                style={{ fontSize: 14 }}
+              />
+            ) : (
+              <div
+                style={{
+                  background: T.surfaceBright,
+                  border: `1px solid ${T.hair}`,
+                  borderRadius: 10,
+                  padding: '12px 14px',
+                  fontSize: 14,
+                  color: T.text2,
+                  whiteSpace: 'pre-wrap',
+                  lineHeight: 1.5,
+                }}
+              >
+                {copyText}
+              </div>
+            )}
+            <div style={{ fontSize: 13, color: T.mutedWarm, marginTop: 10, lineHeight: 1.5 }}>
+              Paste it straight into any chat. Anyone with the link can redeem — send it like a gift, not in a public
+              channel.
+            </div>
+            <a
+              href={link}
+              target="_blank"
+              rel="noreferrer"
+              className="gs-link"
+              style={{
+                display: 'inline-block',
+                marginTop: 10,
                 fontFamily: T.mono,
-                fontSize: 13,
-                color: T.text2,
-                background: T.surface,
-                border: `1px solid ${T.hair}`,
-                borderRadius: 12,
-                padding: '13px 15px',
-                wordBreak: 'break-all',
+                fontSize: 11.5,
+                letterSpacing: '0.08em',
+                color: T.orangeDeep,
               }}
             >
-              {link}
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
-              <CopyButton value={link} label="Copy link" style={{ flex: '1 1 140px' }} />
-              <CopyButton value={card.id} label="Copy code" style={{ flex: '1 1 140px' }} />
-            </div>
-          </div>
-
-          <div className="gs-no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-            <GhostButton onClick={downloadPng} style={{ flex: '1 1 140px' }}>
-              {busy === 'png' ? 'Rendering…' : 'Download PNG'}
-            </GhostButton>
-            <GhostButton onClick={() => window.print()} style={{ flex: '1 1 140px' }}>
-              Print card
-            </GhostButton>
-            <GhostButton onClick={share} style={{ flex: '1 1 140px' }}>
-              Share
-            </GhostButton>
-          </div>
-
-          <div>
-            <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 12 }}>Send it via</div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
-                gap: 10,
-              }}
-            >
-              {SHARE_TARGETS.map((t) => (
-                <div
-                  key={t.name}
-                  style={{
-                    border: `1px solid ${T.hair16}`,
-                    background: T.surface,
-                    borderRadius: 12,
-                    padding: '15px 17px',
-                  }}
-                >
-                  <div style={{ fontSize: 14.5, fontWeight: 500 }}>{t.name}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted, marginTop: 5 }}>{t.hint}</div>
-                </div>
-              ))}
-            </div>
+              DEMO: OPEN THE GIFT LINK →
+            </a>
           </div>
 
           <div
@@ -226,9 +307,42 @@ export default function CardReady() {
             ))}
           </div>
 
-          <Link to="/create" className="gs-link" style={{ fontSize: 14.5, color: T.text2 }}>
-            Create another gift →
-          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+            <Link
+              to="/create"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '14px 24px',
+                borderRadius: 999,
+                fontWeight: 600,
+                fontSize: 15,
+                color: T.canvas,
+                background: T.inkDeep,
+              }}
+            >
+              Create another gift
+            </Link>
+            <a href={link} target="_blank" rel="noreferrer" className="gs-link" style={{ fontSize: 14.5, color: T.text2 }}>
+              See what the recipient sees →
+            </a>
+          </div>
+        </div>
+
+        <div style={{ flex: '1 1 330px', minWidth: 0, animation: 'gsRise .6s ease .24s both' }}>
+          <div ref={cardRef} style={{ background: T.canvas }}>
+            <GiftCard
+              amount={card.amountSats}
+              message={card.senderNote}
+              to={card.recipientName}
+              from={card.senderName}
+              art={art}
+              code={card.id}
+              expiresAt={card.expiresAt}
+              qrValue={link}
+            />
+          </div>
         </div>
       </div>
     </Page>
