@@ -396,7 +396,7 @@ export default function GiftLink() {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ position: 'relative', width: 'min(460px, 100%)', animation: 'gsCardIn .3s ease both' }}
+            style={{ position: 'relative', width: 'min(510px, 100%)', animation: 'gsCardIn .3s ease both' }}
           >
             <button
               type="button"
