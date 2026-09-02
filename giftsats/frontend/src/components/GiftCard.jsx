@@ -153,7 +153,7 @@ const GiftCard = forwardRef(function GiftCard(
               }}
             >
               <div style={{ filter: locked ? 'blur(6px)' : 'none', transition: 'filter .5s ease' }}>
-                <QR value={qrValue || 'giftsats'} size={105} light={T.surfaceBright} logo="/qr-mark.png" />
+                <QR value={qrValue || 'giftsats'} size={105} light={T.surfaceBright} logo="/qrmark.png" />
               </div>
               {locked && (
                 <div
