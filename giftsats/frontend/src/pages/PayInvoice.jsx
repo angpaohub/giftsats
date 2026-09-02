@@ -9,10 +9,7 @@ import { resolveArt } from '../lib/designs.js';
 import { api } from '../lib/api.js';
 import { clock, fmt } from '../lib/format.js';
 
-const WALLETS = [
-  { name: 'Wallet of Satoshi', note: 'iOS · Android' },
-  { name: 'Phoenix', note: 'iOS · Android' },
-];
+const SERVICE_FEE_PERCENT = 2;
 
 function loadPending(id) {
   try {
@@ -96,9 +93,11 @@ export default function PayInvoice() {
 
   return (
     <Page footer={false} maxWidth={1180} title="Pay the invoice">
-      <h1 style={{ ...headline, fontWeight: 400 }}>
-        Pay the <em>invoice.</em>
-      </h1>
+      <div style={{ borderBottom: `1px solid ${T.hair16}`, paddingBottom: 30 }}>
+        <h1 style={{ ...headline, fontWeight: 400 }}>
+          Pay the <em>invoice.</em>
+        </h1>
+      </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'clamp(28px, 4vw, 56px)', marginTop: 40 }}>
         <div style={{ flex: '1 1 420px', minWidth: 0 }}>
@@ -116,6 +115,7 @@ export default function PayInvoice() {
                 height: 8,
                 borderRadius: '50%',
                 background: paid ? T.success : expired ? T.muted : T.orange,
+                animation: !paid && !expired ? 'gsPulse 1.4s ease-in-out infinite' : undefined,
               }}
             />
             <span
@@ -147,38 +147,72 @@ export default function PayInvoice() {
             </Notice>
           ) : (
             <>
-              <div
-                style={{
-                  display: 'inline-block',
-                  padding: 16,
-                  background: T.surfaceBright,
-                  borderRadius: 16,
-                  border: `1px solid ${T.hair}`,
-                  boxShadow: '0 4px 12px rgba(40,30,18,.09)',
-                }}
-              >
-                <QR value={paymentRequest} size={232} light={T.surfaceBright} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 26, alignItems: 'center' }}>
+                <div
+                  style={{
+                    padding: 16,
+                    background: T.surfaceBright,
+                    borderRadius: 16,
+                    border: `1px solid ${T.hair}`,
+                    boxShadow: '0 4px 12px rgba(40,30,18,.09)',
+                  }}
+                >
+                  <QR value={paymentRequest} size={203} light={T.surfaceBright} />
+                </div>
+                <div style={{ flex: '1 1 190px', minWidth: 0, textAlign: 'center' }}>
+                  <div style={{ fontFamily: T.serif, fontSize: 23, lineHeight: 1.2 }}>
+                    Scan with any Lightning wallet
+                  </div>
+                </div>
               </div>
 
               <div
                 style={{
-                  marginTop: 16,
-                  fontFamily: T.mono,
-                  fontSize: 12,
-                  color: T.text2,
-                  wordBreak: 'break-all',
-                  lineHeight: 1.6,
+                  marginTop: 24,
                   background: T.surface,
-                  border: `1px solid ${T.hair}`,
+                  border: `1px solid ${T.hair16}`,
                   borderRadius: 12,
-                  padding: '12px 14px',
+                  padding: '15px 17px',
                 }}
               >
-                {paymentRequest.slice(0, 44)}…{paymentRequest.slice(-8)}
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                <CopyButton value={paymentRequest} label="Copy invoice" copiedLabel="Copied" block />
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                    marginBottom: 9,
+                  }}
+                >
+                  <span style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.16em' }}>Invoice</span>
+                  <CopyButton
+                    value={paymentRequest}
+                    label="Copy"
+                    copiedLabel="Copied ✓"
+                    style={{
+                      border: 'none',
+                      padding: 0,
+                      borderRadius: 0,
+                      background: 'transparent',
+                      fontFamily: T.mono,
+                      fontSize: 11,
+                      letterSpacing: '0.1em',
+                      textTransform: 'uppercase',
+                      color: T.orangeDeep,
+                    }}
+                  />
+                </div>
+                <div
+                  style={{
+                    fontFamily: T.mono,
+                    fontSize: 12.5,
+                    lineHeight: 1.7,
+                    color: T.text2,
+                    wordBreak: 'break-all',
+                  }}
+                >
+                  {paymentRequest}
+                </div>
               </div>
             </>
           )}
@@ -196,7 +230,7 @@ export default function PayInvoice() {
           >
             {[
               ['Gift amount', `${fmt(amountSats)} sats`],
-              ['Service fee', `${fmt(platformFee)} sats`],
+              [`Service fee (${SERVICE_FEE_PERCENT}%)`, `${fmt(platformFee)} sats`],
               ['Network fee', `${fmt(networkFee)} sats`],
               ...(designFee > 0 ? [['Design fee', `${fmt(designFee)} sats`]] : []),
             ].map(([k, v]) => (
@@ -209,39 +243,84 @@ export default function PayInvoice() {
               style={{
                 borderTop: `1px solid ${T.hair}`,
                 paddingTop: 12,
+                marginTop: 2,
                 display: 'flex',
                 justifyContent: 'space-between',
+                alignItems: 'baseline',
                 gap: 16,
               }}
             >
-              <span style={{ color: T.ink, fontWeight: 500 }}>You pay</span>
-              <span style={{ color: T.ink, fontWeight: 500 }}>{fmt(total)} sats</span>
+              <span style={{ color: T.ink, fontWeight: 600, fontSize: 16 }}>Total to pay</span>
+              <span style={{ fontFamily: T.mono, fontWeight: 500, fontSize: 20, color: T.orangeDeep }}>
+                {fmt(total)} sats
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12.5, color: T.mutedWarm }}>
+              <span>Recipient receives</span>
+              <span>{fmt(amountSats)} sats</span>
             </div>
           </div>
 
-          <div style={{ marginTop: 28 }}>
-            <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>Pay from</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
-              {WALLETS.map((w) => (
-                <div
-                  key={w.name}
+          {!expired && !paid && (
+            <div
+              style={{
+                marginTop: 18,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+                flexWrap: 'wrap',
+              }}
+            >
+              <Link
+                to="/create"
+                style={{ fontFamily: T.mono, fontSize: 12, letterSpacing: '0.08em', color: T.mutedWarm }}
+              >
+                ← Cancel & edit details
+              </Link>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 13.5, color: T.mutedWarm }}>
+                <span
                   style={{
-                    border: `1px solid ${T.hair16}`,
-                    borderRadius: 12,
-                    padding: '12px 16px',
-                    background: T.surface,
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: T.orangeDeep,
+                    animation: 'gsPulse 1.4s ease-in-out infinite',
                   }}
-                >
-                  <div style={{ fontSize: 14.5, fontWeight: 500 }}>{w.name}</div>
-                  <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted, marginTop: 3 }}>{w.note}</div>
-                </div>
-              ))}
+                />
+                Listening for payment on our node…
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div style={{ flex: '1 1 330px', minWidth: 0 }}>
           <div style={{ position: 'sticky', top: 32 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em' }}>Preview</div>
+              <div
+                style={{
+                  fontFamily: T.mono,
+                  fontSize: 10,
+                  letterSpacing: '0.16em',
+                  textTransform: 'uppercase',
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  border: `1px solid ${paid ? T.successBorder : T.hair16}`,
+                  color: paid ? T.success : T.muted,
+                }}
+              >
+                {paid ? 'Live card' : expired ? 'Not minted' : 'Not minted yet'}
+              </div>
+            </div>
             <GiftCard
               amount={amountSats}
               message={form?.message}
