@@ -191,6 +191,7 @@ const GiftCard = forwardRef(function GiftCard(
           }}
         />
         <div
+          className="gs-redeem-content"
           style={{
             position: 'relative',
             display: 'flex',
@@ -207,7 +208,10 @@ const GiftCard = forwardRef(function GiftCard(
             <div style={{ flex: 1, borderTop: '1px solid rgba(199,122,18,.35)' }} />
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'clamp(13px,3vw,18px)' }}>
+          <div
+            className="gs-redeem-row"
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'clamp(13px,3vw,18px)' }}
+          >
             <div
               style={{
                 position: 'relative',
@@ -251,11 +255,11 @@ const GiftCard = forwardRef(function GiftCard(
                 </div>
               )}
             </div>
-            <div style={{ flex: '1 1 230px', minWidth: 210 }}>
+            <div className="gs-redeem-text">
               <div style={{ fontFamily: T.serif, fontSize: 'clamp(20px,4.6vw,23px)', lineHeight: 1.15 }}>
                 Scan to redeem
               </div>
-              <div style={{ fontSize: 13, color: T.text3, lineHeight: 1.4, marginTop: 8, whiteSpace: 'nowrap' }}>
+              <div className="gs-redeem-sub" style={{ color: T.text3, lineHeight: 1.4, marginTop: 8 }}>
                 Enter your lightning address to receive sats
               </div>
             </div>
@@ -266,23 +270,23 @@ const GiftCard = forwardRef(function GiftCard(
           </div>
 
           <div
+            className="gs-redeem-bottom"
             style={{
               borderTop: `1px solid ${T.hair}`,
-              paddingTop: 13,
               display: 'flex',
               alignItems: 'flex-end',
               justifyContent: 'space-between',
-              gap: 16,
             }}
           >
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: '0.2em', color: '#A2957F' }}>CODE</div>
+              <div className="gs-redeem-micro" style={{ fontFamily: T.mono, color: '#A2957F' }}>
+                CODE
+              </div>
               <div
+                className={`gs-redeem-val ${code ? 'gs-redeem-val-code' : 'gs-redeem-val-placeholder'}`}
                 style={{
                   fontFamily: T.mono,
-                  fontSize: code ? 10 : 10.5,
                   color: code ? T.ink : '#A2957F',
-                  marginTop: 5,
                   // Only the raw UUID needs a hard break — it has no spaces to
                   // wrap on. The placeholder sentence has real words, and
                   // break-all was slicing "settles" into "settle" + "s" on
@@ -295,10 +299,10 @@ const GiftCard = forwardRef(function GiftCard(
               </div>
             </div>
             <div style={{ textAlign: 'right', whiteSpace: 'nowrap', flex: '0 0 auto' }}>
-              <div style={{ fontFamily: T.mono, fontSize: 9.5, letterSpacing: '0.2em', color: '#A2957F' }}>
+              <div className="gs-redeem-micro" style={{ fontFamily: T.mono, color: '#A2957F' }}>
                 REDEEM BY
               </div>
-              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.ink, marginTop: 5 }}>
+              <div className="gs-redeem-val-date" style={{ fontFamily: T.mono, color: T.ink }}>
                 {formatDate(expiresAt) || '—'}
               </div>
             </div>

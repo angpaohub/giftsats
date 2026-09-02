@@ -210,3 +210,124 @@ p {
     display: none !important;
   }
 }
+
+/* Sticky card preview (Create, Pay Invoice, Submit): only meaningful in the
+   desktop two-column layout, where it stays in view beside a taller form.
+   Below ~880px the columns stack, so the sticky wrapper collapses to fit its
+   own content with no scroll room to move within — sticky then just tracks
+   the page linearly and can end up sitting under the fixed header near the
+   bottom of the form. There's nothing to stay level with once stacked, so
+   disable it there and let the card sit in normal flow. */
+.gs-sticky-preview {
+  position: sticky;
+  top: 112px;
+}
+@media (max-width: 880px) {
+  .gs-sticky-preview {
+    position: static;
+    top: auto;
+    /* Stacked, this is the last thing on the page. Scrolling to the true
+       bottom stops once the page's own trailing padding reaches the
+       viewport edge — if that's shorter than the header, the last bit of
+       scroll room runs out with the card's top still behind the sticky
+       header. Pad enough extra room below it to clear the header fully. */
+    margin-bottom: 120px;
+  }
+}
+
+/* GiftCard back panel — "REDEEM QR" section. Shared by every page that
+   renders the full card (Create, Pay Invoice, Card Ready, the Gift Link
+   modal, Submit's preview), so one fix here covers all of them.
+
+   Sized by the card's own rendered width via a container query, not a
+   viewport media query — the card can end up just as narrow inside a
+   moderate desktop window (a flex column that hasn't got much room) as it
+   does on a phone, and just as wide inside a phone-sized column if it's
+   given the room. Above the breakpoint every rule below is a no-op — it
+   just restates the existing inline defaults — so normal desktop widths
+   render pixel-identical to before. */
+.gs-redeem-content {
+  container-type: inline-size;
+}
+
+.gs-redeem-row {
+  justify-content: flex-start;
+}
+.gs-redeem-text {
+  flex: 1 1 230px;
+  min-width: 210px;
+  text-align: left;
+}
+.gs-redeem-sub {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.gs-redeem-micro {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+}
+.gs-redeem-val {
+  margin-top: 5px;
+}
+.gs-redeem-val-code {
+  font-size: 10px;
+}
+.gs-redeem-val-placeholder {
+  font-size: 10.5px;
+}
+.gs-redeem-val-date {
+  font-size: 12px;
+  margin-top: 5px;
+}
+.gs-redeem-bottom {
+  padding-top: 13px;
+  gap: 16px;
+}
+
+@container (max-width: 360px) {
+  /* The QR and its caption no longer fit side by side — stack them and
+     centre the pair as one group instead of leaving them left-anchored
+     with dead space where the text column used to reach. */
+  .gs-redeem-row {
+    flex-direction: column;
+    justify-content: center;
+  }
+  .gs-redeem-text {
+    flex: 0 1 auto;
+    min-width: 0;
+    text-align: center;
+  }
+  .gs-redeem-sub {
+    white-space: normal;
+    /* At the default 13px this line was ~1px wider than the room it had —
+       just enough over to wrap, and always right before the last word, so
+       "sats" fell to an orphan line by itself. Nudging the size down keeps
+       the whole sentence on one line with room to spare. */
+    font-size: 12px;
+  }
+
+  /* CODE / REDEEM BY: shrink so the redeem-by date reliably stays on one
+     line at this width instead of wrapping. */
+  .gs-redeem-micro {
+    font-size: 8px;
+    letter-spacing: 0.16em;
+  }
+  .gs-redeem-val {
+    margin-top: 4px;
+  }
+  .gs-redeem-val-code {
+    font-size: 8.5px;
+  }
+  .gs-redeem-val-placeholder {
+    font-size: 9px;
+  }
+  .gs-redeem-val-date {
+    font-size: 10px;
+    margin-top: 4px;
+  }
+  .gs-redeem-bottom {
+    padding-top: 11px;
+    gap: 14px;
+  }
+}
