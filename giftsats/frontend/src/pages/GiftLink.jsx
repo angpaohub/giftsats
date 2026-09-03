@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
-import { T, Bolt, Input, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
+import { T, Bolt, Input, Textarea, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
+import CopyButton from '../components/CopyButton.jsx';
 import { useCard } from '../lib/useCard.js';
 import { api } from '../lib/api.js';
-import { cardUrl, fmt, formatDate, isLightningAddress } from '../lib/format.js';
+import { cardUrl, fmt, formatDate, isLightningAddress, isBolt11, normalizeBolt11 } from '../lib/format.js';
 
 // Send people straight to the store listing for their platform. Desktop
 // visitors (no store to send them to) land on the wallet's own site instead.
@@ -77,6 +78,12 @@ export default function GiftLink() {
   const { id } = useParams();
   const { card, art, error, loading, setCard } = useCard(id, { poll: true });
   const [address, setAddress] = useState('');
+  // Wallets like Phoenix have no Lightning address to give — the only way to
+  // receive is an invoice generated per payment. This is the page nearly
+  // everyone actually lands on (the share link / QR), so it needs the same
+  // choice Redeem.jsx offers.
+  const [payoutMode, setPayoutMode] = useState('address'); // 'address' | 'invoice'
+  const [invoice, setInvoice] = useState('');
   const [phase, setPhase] = useState('ready'); // ready | sending | done
   const [failure, setFailure] = useState('');
   const [showQr, setShowQr] = useState(false);
@@ -95,14 +102,20 @@ export default function GiftLink() {
     };
   }, [showQr]);
 
+  const destinationOk = payoutMode === 'invoice' ? isBolt11(invoice) : isLightningAddress(address);
+
   async function redeem() {
-    if (!card || !isLightningAddress(address)) return;
+    if (!card || !destinationOk) return;
     setPhase('sending');
     setFailure('');
     try {
       await api.redeem({
-        lightningAddress: address.trim(),
         giftCardId: card.id,
+        // Exactly one of these — the backend rejects both being present, so
+        // what's confirmed on screen is what actually gets paid.
+        ...(payoutMode === 'invoice'
+          ? { bolt11: normalizeBolt11(invoice) }
+          : { lightningAddress: address.trim() }),
       });
       setPhase('done');
       setCard({ ...card, status: 'redeemed' });
@@ -115,7 +128,11 @@ export default function GiftLink() {
           ? 'This card has already been redeemed.'
           : e.status === 410
             ? 'This card has expired.'
-            : `${e.message} — the sats are still on the card, try another address.`
+            : // Invoice validation errors (wrong amount, expired, unreadable)
+              // already say exactly what to fix.
+              e.status === 400
+              ? e.message
+              : `${e.message} — the sats are still on the card, try another address.`
       );
     }
   }
@@ -207,7 +224,9 @@ export default function GiftLink() {
         <div style={{ marginTop: 36, width: 'min(440px, 100%)', textAlign: 'left' }}>
           {done && (
             <Notice tone="good">
-              {fmt(card.amountSats)} sats sent to {address}. Payment settled over Lightning.
+              {payoutMode === 'invoice'
+                ? `${fmt(card.amountSats)} sats sent — your invoice is paid.`
+                : `${fmt(card.amountSats)} sats sent to ${address}. Payment settled over Lightning.`}
             </Notice>
           )}
 
@@ -224,15 +243,70 @@ export default function GiftLink() {
 
           {canRedeem && !done && (
             <>
-              <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
-                Your Lightning address
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                {[
+                  { id: 'address', label: 'Lightning address' },
+                  { id: 'invoice', label: 'Invoice' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className="gs-outline"
+                    onClick={() => {
+                      setPayoutMode(m.id);
+                      setFailure('');
+                    }}
+                    style={{
+                      flex: 1,
+                      fontSize: 13,
+                      padding: '9px 12px',
+                      borderRadius: 10,
+                      border: `1px solid ${payoutMode === m.id ? T.text2 : T.hair16}`,
+                      color: payoutMode === m.id ? T.text : T.text2,
+                      transition: 'border-color .15s, color .15s',
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
               </div>
-              <Input
-                placeholder="you@walletofsatoshi.com"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                style={{ fontFamily: T.mono, fontSize: 14.5 }}
-              />
+
+              {payoutMode === 'invoice' ? (
+                <>
+                  <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
+                    Paste your invoice
+                  </div>
+                  {/* A BOLT11 invoice carries its own amount, and this card pays
+                      out its own amount or nothing — so it has to be exact. */}
+                  <Notice tone="info">
+                    In your wallet, create an invoice for exactly <strong>{fmt(card.amountSats)} sats</strong>,
+                    then paste it below. Invoices are single-use and expire — make it right before you paste it.
+                  </Notice>
+                  <div style={{ margin: '12px 0' }}>
+                    <CopyButton value={String(card.amountSats)} label={`Copy ${fmt(card.amountSats)}`} block />
+                  </div>
+                  <Textarea
+                    rows={3}
+                    placeholder="lnbc…"
+                    value={invoice}
+                    onChange={(e) => setInvoice(e.target.value)}
+                    style={{ fontFamily: T.mono, fontSize: 12.5, lineHeight: 1.5, resize: 'vertical' }}
+                  />
+                </>
+              ) : (
+                <>
+                  <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
+                    Your Lightning address
+                  </div>
+                  <Input
+                    placeholder="you@walletofsatoshi.com"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    style={{ fontFamily: T.mono, fontSize: 14.5 }}
+                  />
+                </>
+              )}
+
               {failure && (
                 <div style={{ marginTop: 14 }}>
                   <Notice tone="bad">{failure}</Notice>
@@ -241,16 +315,23 @@ export default function GiftLink() {
 
               <PrimaryButton
                 onClick={redeem}
-                disabled={!isLightningAddress(address) || phase === 'sending'}
+                disabled={!destinationOk || phase === 'sending'}
                 style={{ width: '100%', marginTop: 16 }}
               >
                 {phase === 'sending' ? 'Sending sats…' : 'Redeem to my wallet'}
               </PrimaryButton>
               <div style={{ marginTop: 12, fontSize: 13.5, color: T.mutedWarm, textAlign: 'center' }}>
-                {isLightningAddress(address)
+                {destinationOk
                   ? 'Sats leave the card the moment you tap.'
-                  : 'Enter a valid Lightning address.'}
+                  : payoutMode === 'invoice'
+                    ? `Paste an invoice for exactly ${fmt(card.amountSats)} sats.`
+                    : 'Enter a valid Lightning address.'}
               </div>
+              {payoutMode === 'invoice' && (
+                <div style={{ marginTop: 8, fontSize: 12.5, color: T.mutedWarm, textAlign: 'center' }}>
+                  Using Phoenix or your own node? This is the option for you.
+                </div>
+              )}
 
               <div style={{ marginTop: 22, borderTop: `1px solid ${T.hair16}`, paddingTop: 20 }}>
                 <div style={{ fontWeight: 600, fontSize: 15 }}>No wallet yet?</div>
