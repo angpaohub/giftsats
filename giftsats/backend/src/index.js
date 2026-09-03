@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import path from 'path';
-import { randomUUID, createHash, timingSafeEqual, randomBytes } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice } from './lnd.js';
 import {
@@ -93,10 +93,18 @@ function publicRefundStatus(card) {
   return card.refundStatus;
 }
 
-function publicCard(card) {
+// A card's full id (in the share link) is itself the redeem credential — no
+// separate key, anyone with the complete link can redeem. The short printed
+// code is only the first 12 hex chars of that id, so knowing the code alone
+// never reveals the rest of it — that's what keeps the code lookup-only.
+// GET /api/gift/code/:code therefore calls this with includeId: false, so a
+// card looked up by its short code never carries a usable id in the response
+// (see GET /api/gift/code/:code below). GET /api/gift/:id — reached only by
+// someone who already has the full id — passes it through as normal.
+function publicCard(card, { includeId = true } = {}) {
   if (!card) return card;
   return {
-    id:            card.id,
+    ...(includeId ? { id: card.id } : {}),
     redeemCode:    redeemCodeFor(card.id),
     amountSats:    card.amountSats,
     designId:      card.designId,
@@ -107,9 +115,6 @@ function publicCard(card) {
     recipientName: card.recipientName,
     senderName:    card.senderName,
     status:        publicStatus(card),
-    // GS-004: no redeem credential of any kind is ever handed back over a GET.
-    // The real secret is generated once at creation and returned only in the
-    // /api/gift/create response — see redeemSecret below and validRedeemSecret.
     expiresAt:     card.expiresAt,
     refundStatus:  publicRefundStatus(card),
     createdAt:     card.createdAt,
@@ -153,28 +158,6 @@ function requireAdminKey(req, res, next) {
   if (!process.env.ADMIN_KEY) return res.status(500).json({ error: 'ADMIN_KEY not set on server' });
   if (!validAdminKey(req.get('X-Admin-Key') || '')) return res.status(403).json({ error: 'Forbidden' });
   next();
-}
-
-// ── Redeem secret (GS-004) ───────────────────────────────
-// A gift card's real credential is a 256-bit random secret generated once in
-// POST /api/gift/create and returned in that response only — never stored in
-// plaintext (only its SHA-256 hash goes in the DB) and never handed back by
-// any GET. The frontend carries the raw secret in the share link's URL
-// fragment (`#s=...`), which browsers never transmit to any server — see
-// cardUrl() in the frontend's format.js. Compared the same way as
-// validAdminKey: as digests via timingSafeEqual, so neither a wrong guess's
-// length nor its bytes leak through response timing.
-function validRedeemSecret(storedHashHex, provided) {
-  if (!storedHashHex || !provided) return false;
-  const a = createHash('sha256').update(String(provided)).digest();
-  let b;
-  try {
-    b = Buffer.from(storedHashHex, 'hex');
-  } catch {
-    return false;
-  }
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
 }
 
 // ── Health ──────────────────────────────────────────────
@@ -449,13 +432,6 @@ app.post('/api/gift/create', async (req, res) => {
       });
     }
 
-    // GS-004: the actual redeem credential, generated once, right now. Only
-    // its hash is ever persisted — the raw value is returned exactly once,
-    // below, and the frontend is responsible for carrying it forward (in the
-    // URL fragment of the share link/QR) from here on.
-    const redeemSecret = randomBytes(32).toString('hex');
-    const redeemSecretHash = createHash('sha256').update(redeemSecret).digest('hex');
-
     const invoice = await createInvoice(totalSats, `GiftSats: ${amountSats} sats`);
     const giftCard = await createGiftCard({
       amountSats,
@@ -468,13 +444,11 @@ app.post('/api/gift/create', async (req, res) => {
       senderLightningAddress: senderLightningAddress || null,
       paymentHash: invoice.r_hash,
       paymentRequest: invoice.payment_request,
-      redeemSecretHash,
     });
 
     res.json({
       giftCardId: giftCard.id,
       redeemCode: redeemCodeFor(giftCard.id),
-      redeemSecret,
       paymentRequest: invoice.payment_request,
       totalSats,
       amountSats,
@@ -572,11 +546,15 @@ app.get('/api/gift/:id', async (req, res) => {
 });
 
 // ── Look a card up by the short redeem code printed on it ─
+// Track/lookup only — this response never carries the card's full id, so
+// knowing just the short code (which is guessable/enumerable at 48 bits) can
+// never be turned into a working redemption. Only someone with the complete
+// share link (the full id) can redeem — see publicCard() above.
 app.get('/api/gift/code/:code', async (req, res) => {
   try {
     const giftCard = await getGiftCardByCode(req.params.code);
     if (!giftCard) return res.status(404).json({ error: 'Not found' });
-    res.json(publicCard(await refreshCard(giftCard)));
+    res.json(publicCard(await refreshCard(giftCard), { includeId: false }));
   } catch (e) {
     console.error('code lookup error:', e.message);
     res.status(500).json({ error: e.message });
@@ -586,7 +564,7 @@ app.get('/api/gift/code/:code', async (req, res) => {
 // ── Redeem gift card ─────────────────────────────────────
 app.post('/api/redeem', async (req, res) => {
   try {
-    const { redeemSecret, lightningAddress, giftCardId } = req.body;
+    const { lightningAddress, giftCardId } = req.body;
     if (!lightningAddress) return res.status(400).json({ error: 'Lightning address required' });
     if (!giftCardId) return res.status(400).json({ error: 'Gift card ID required' });
 
@@ -601,12 +579,9 @@ app.post('/api/redeem', async (req, res) => {
       return res.status(410).json({ error: 'Gift card has expired', expiredAt: card.expiresAt });
     }
 
-    // ── Redeem key check (GS-004) ────────────────────
-    // No pre-fix cards are outstanding, so this is a hard requirement for
-    // every card, with no legacy fallback.
-    if (!validRedeemSecret(card.redeemSecretHash, redeemSecret)) {
-      return res.status(403).json({ error: 'Wrong or missing redeem key' });
-    }
+    // Anyone who supplies this card's full id can redeem it — the id itself
+    // is the credential (see publicCard()'s includeId comment above). There
+    // is deliberately no separate secret/key check here.
 
     // ── Atomically claim the card before paying out (GS-003) ─
     // This UPDATE only matches a row if status is still 'minted' right now —
@@ -743,12 +718,7 @@ app.get('/card/:id', async (req, res) => {
 </head>
 <body>
   <script>
-    // GS-004: the redeem secret travels only in the URL fragment (never sent
-    // to this server — that's the whole point), so it never reached this
-    // handler. But this script runs in the visitor's own browser, which still
-    // has the original "/card/:id#s=..." address, so window.location.hash is
-    // carried forward by hand onto the redirect target.
-    window.location.replace("${viewUrl}" + window.location.hash);
+    window.location.replace("${viewUrl}");
   </script>
 </body>
 </html>`);

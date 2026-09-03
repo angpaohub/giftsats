@@ -4,7 +4,7 @@ import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
 import { T, Bolt, Input, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
 import { useCard } from '../lib/useCard.js';
-import { api, redeemSecretFromHash } from '../lib/api.js';
+import { api } from '../lib/api.js';
 import { cardUrl, fmt, formatDate, isLightningAddress } from '../lib/format.js';
 
 // Send people straight to the store listing for their platform. Desktop
@@ -76,11 +76,6 @@ function MiniLogo() {
 export default function GiftLink() {
   const { id } = useParams();
   const { card, art, error, loading, setCard } = useCard(id, { poll: true });
-  // GS-004: this card's real redeem credential, read from the URL fragment
-  // (`#s=...`) that the share link/QR embedded it in — never sent to, or
-  // seen by, the server. Missing here means this link/id was shared on its
-  // own without its fragment (e.g. just the id got forwarded).
-  const [redeemSecret] = useState(() => redeemSecretFromHash());
   const [address, setAddress] = useState('');
   const [phase, setPhase] = useState('ready'); // ready | sending | done
   const [failure, setFailure] = useState('');
@@ -106,7 +101,6 @@ export default function GiftLink() {
     setFailure('');
     try {
       await api.redeem({
-        redeemSecret,
         lightningAddress: address.trim(),
         giftCardId: card.id,
       });
@@ -149,7 +143,6 @@ export default function GiftLink() {
   const expired = card.status === 'expired' || ['refunded', 'forfeited'].includes(card.refundStatus);
   const pending = card.status === 'pending';
   const canRedeem = card.status === 'minted' && !expired;
-  const missingKey = canRedeem && !redeemSecret;
   const from = (card.senderName || '').trim();
 
   return (
@@ -229,14 +222,7 @@ export default function GiftLink() {
 
           {pending && <Notice>This card is waiting on its payment to settle. Check back in a moment.</Notice>}
 
-          {missingKey && (
-            <Notice tone="bad">
-              This link is missing its redeem key, so it can't move the sats. Ask whoever sent it to resend the
-              original gift link (not just the card id) — or its QR code.
-            </Notice>
-          )}
-
-          {canRedeem && !missingKey && !done && (
+          {canRedeem && !done && (
             <>
               <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
                 Your Lightning address
@@ -447,7 +433,7 @@ export default function GiftLink() {
               art={art}
               code={card.id}
               expiresAt={card.expiresAt}
-              qrValue={cardUrl(card.id, redeemSecret)}
+              qrValue={cardUrl(card.id)}
             />
           </div>
         </div>

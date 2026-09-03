@@ -194,17 +194,12 @@ export default function Create() {
         senderLightningAddress: form.refund.trim() || undefined,
       });
       // Kept so a refresh (or a trip out to a wallet app) lands back on the
-      // invoice — this also carries data.redeemSecret along as a fallback in
-      // case the URL fragment below is ever lost (see PayInvoice.jsx).
+      // invoice.
       localStorage.setItem(
         'giftsats_pending',
         JSON.stringify({ ...data, designId, marketDesign, form, savedAt: Date.now() })
       );
-      // GS-004: data.redeemSecret is this card's real credential, returned
-      // exactly once by /api/gift/create. It rides from here on as a URL
-      // fragment (never sent to any server) through /pay and /ready, and
-      // ends up embedded in the share link/QR the sender copies.
-      navigate(`/pay/${data.giftCardId}#s=${data.redeemSecret}`);
+      navigate(`/pay/${data.giftCardId}`);
     } catch (e) {
       setError(e.message);
       setSubmitting(false);
