@@ -40,18 +40,40 @@ export async function payLightningAddress(lightningAddress, amountSats) {
   if (!invoiceRes.ok) throw new Error('Could not get invoice');
   const { pr } = await invoiceRes.json();
 
-  const payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
-    method: 'POST', agent, headers,
-    body: JSON.stringify({ payment_request: pr }),
-  });
-  if (!payRes.ok) throw new Error(`LND pay error: ${await payRes.text()}`);
+  // Past this point we're asking our own LND node to actually move funds.
+  // If anything goes wrong from here on, we can't always be sure whether the
+  // payment went out anyway (a timed-out HTTP call, or a response that came
+  // back before LND itself resolved the payment) — so these failures are
+  // tagged `.ambiguous = true`. Callers (redeem/refund) must not treat an
+  // ambiguous failure as "safe to retry automatically", since the sats may
+  // already be gone; everything thrown before this point is a clean failure
+  // (nothing was ever sent) and is safe to retry.
+  let payRes;
+  try {
+    payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
+      method: 'POST', agent, headers,
+      body: JSON.stringify({ payment_request: pr }),
+    });
+  } catch (networkErr) {
+    const err = new Error(`LND pay request failed: ${networkErr.message}`);
+    err.ambiguous = true;
+    throw err;
+  }
+  if (!payRes.ok) {
+    const err = new Error(`LND pay error: ${await payRes.text()}`);
+    err.ambiguous = true;
+    throw err;
+  }
 
   const payData = await payRes.json();
   if (payData.payment_error) {
+    // LND resolved the call and explicitly says routing failed — nothing left the node.
     throw new Error(`LND routing failed: ${payData.payment_error}`);
   }
   if (!payData.payment_preimage) {
-    throw new Error('LND payment did not return a preimage — payment likely failed');
+    const err = new Error('LND payment did not return a preimage — payment status unknown');
+    err.ambiguous = true;
+    throw err;
   }
 
   return payData;

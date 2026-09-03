@@ -10,6 +10,9 @@ import {
   initDB, createGiftCard, getGiftCard, getGiftCardByCode, updateGiftCard, getStats,
   listAllCards, listExpiredUnredeemed,
   listDesigns, getDesignByCode, createDesign, incrementDesignUseCount, takedownDesign, restoreDesign,
+  claimForRedeem, finalizeRedeem, markRedeemUnknown, releaseRedeemClaim,
+  claimForMint,
+  claimForRefund, finalizeRefund, markRefundUnknown, releaseRefundClaim, claimForForfeit,
 } from './store.js';
 import { renderCardOgImage } from './ogImage.js';
 
@@ -75,6 +78,21 @@ const DESIGN_TAGS = ['Minimal', 'Bold', 'Celebration', 'Seasonal'];
 // Anyone holding the share link can call GET /api/gift/:id, so the public shape
 // of a card must not carry the payment request, the payment hash, the sender's
 // refund address, or the address it was redeemed to.
+// 'redeeming' / 'payout_unknown' / 'refunding' / 'refund_unknown' are internal
+// in-flight or frozen-for-review states used to make redemption and refund
+// atomic (see claimForRedeem/claimForRefund in store.js). A public poller has
+// no use for that level of detail and no existing frontend code knows those
+// values — fold them into the nearest stable, already-handled public status.
+function publicStatus(card) {
+  if (card.status === 'redeeming' || card.status === 'payout_unknown') return 'redeemed';
+  if (card.status === 'refunding' || card.status === 'refund_unknown') return 'expired';
+  return card.status;
+}
+function publicRefundStatus(card) {
+  if (card.refundStatus === 'refunding' || card.refundStatus === 'refund_unknown') return 'refunded';
+  return card.refundStatus;
+}
+
 function publicCard(card) {
   if (!card) return card;
   return {
@@ -88,10 +106,10 @@ function publicCard(card) {
     senderNote:    card.senderNote,
     recipientName: card.recipientName,
     senderName:    card.senderName,
-    status:        card.status,
+    status:        publicStatus(card),
     cashuToken:    card.cashuToken,
     expiresAt:     card.expiresAt,
-    refundStatus:  card.refundStatus,
+    refundStatus:  publicRefundStatus(card),
     createdAt:     card.createdAt,
   };
 }
@@ -447,59 +465,64 @@ app.post('/api/gift/create', async (req, res) => {
 // mint the card and fire the designer/platform payouts.
 async function refreshCard(giftCard) {
   {
-    if (giftCard.status === 'minted' || giftCard.status === 'redeemed') {
+    if (giftCard.status !== 'pending') {
       return giftCard;
     }
 
-    if (giftCard.status === 'pending') {
-      const paid = await checkPayment(giftCard.paymentHash);
-      if (paid) {
-        const cashuToken = `cashuA_${Buffer.from(JSON.stringify({
-          giftCardId: giftCard.id,
-          amount: giftCard.amountSats,
-        })).toString('base64')}`;
+    const paid = await checkPayment(giftCard.paymentHash);
+    if (paid) {
+      const cashuToken = `cashuA_${Buffer.from(JSON.stringify({
+        giftCardId: giftCard.id,
+        amount: giftCard.amountSats,
+      })).toString('base64')}`;
 
-        const updated = await updateGiftCard(giftCard.id, {
-          status: 'minted',
-          cashuToken,
-          cashuQuote: null,
-        });
-
-        // ── Pay platform wallet (non-fatal) ────────────
-        if (process.env.PLATFORM_WALLET && giftCard.platformFee > 0) {
-          payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee)
-            .catch(e => console.error('platform fee error (non-fatal):', e.message));
-        }
-
-        // ── Auto-pay designer (non-fatal) ──────────────
-        // Platform keeps 20%, designer gets 80%
-        if (giftCard.designFee > 0) {
-          const design = await getDesignByCode(giftCard.designId);
-          if (design?.lightningAddress) {
-            const designerPayout = Math.floor(giftCard.designFee * (1 - DESIGNER_PLATFORM_CUT));
-            const platformDesignCut = giftCard.designFee - designerPayout;
-
-            payLightningAddress(design.lightningAddress, designerPayout)
-              .then(() => {
-                console.log(`[design-fee] Paid ${designerPayout} sats → ${design.lightningAddress}`);
-                incrementDesignUseCount(giftCard.designId).catch(() => {});
-              })
-              .catch(e => console.error('designer fee error (non-fatal):', e.message));
-
-            // ── Platform 20% cut → platform wallet ────
-            if (process.env.PLATFORM_WALLET && platformDesignCut > 0) {
-              payLightningAddress(process.env.PLATFORM_WALLET, platformDesignCut)
-                .then(() => console.log(`[design-cut] Paid ${platformDesignCut} sats → platform`))
-                .catch(e => console.error('platform design cut error (non-fatal):', e.message));
-            }
-          }
-        } else if (giftCard.designId) {
-          // Still increment use count for free designs
-          incrementDesignUseCount(giftCard.designId).catch(() => {});
-        }
-
-        return updated;
+      // ── Atomically claim the mint (GS-005) ───────────
+      // /api/gift/:id and /api/gift/code/:code are both public and unrate-
+      // limited, and the frontend polls them every few seconds — so several
+      // requests can land here in the same instant right after an invoice
+      // settles. Only the request whose UPDATE actually matches a row
+      // (WHERE status='pending') is "the one" that minted this card, and
+      // only that request fires the designer/platform fee payouts below.
+      // Everyone else just gets back the card someone else already minted.
+      const claimed = await claimForMint(giftCard.id, cashuToken);
+      if (!claimed) {
+        return getGiftCard(giftCard.id);
       }
+
+      // ── Pay platform wallet (non-fatal) ────────────
+      if (process.env.PLATFORM_WALLET && giftCard.platformFee > 0) {
+        payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee)
+          .catch(e => console.error('platform fee error (non-fatal):', e.message));
+      }
+
+      // ── Auto-pay designer (non-fatal) ──────────────
+      // Platform keeps 20%, designer gets 80%
+      if (giftCard.designFee > 0) {
+        const design = await getDesignByCode(giftCard.designId);
+        if (design?.lightningAddress) {
+          const designerPayout = Math.floor(giftCard.designFee * (1 - DESIGNER_PLATFORM_CUT));
+          const platformDesignCut = giftCard.designFee - designerPayout;
+
+          payLightningAddress(design.lightningAddress, designerPayout)
+            .then(() => {
+              console.log(`[design-fee] Paid ${designerPayout} sats → ${design.lightningAddress}`);
+              incrementDesignUseCount(giftCard.designId).catch(() => {});
+            })
+            .catch(e => console.error('designer fee error (non-fatal):', e.message));
+
+          // ── Platform 20% cut → platform wallet ────
+          if (process.env.PLATFORM_WALLET && platformDesignCut > 0) {
+            payLightningAddress(process.env.PLATFORM_WALLET, platformDesignCut)
+              .then(() => console.log(`[design-cut] Paid ${platformDesignCut} sats → platform`))
+              .catch(e => console.error('platform design cut error (non-fatal):', e.message));
+          }
+        }
+      } else if (giftCard.designId) {
+        // Still increment use count for free designs
+        incrementDesignUseCount(giftCard.designId).catch(() => {});
+      }
+
+      return claimed;
     }
 
     return giftCard;
@@ -540,7 +563,9 @@ app.post('/api/redeem', async (req, res) => {
 
     const card = await getGiftCard(giftCardId);
     if (!card) return res.status(404).json({ error: 'Gift card not found' });
-    if (card.status === 'redeemed') return res.status(409).json({ error: 'Gift card already redeemed' });
+    if (card.status === 'redeemed' || card.status === 'redeeming' || card.status === 'payout_unknown') {
+      return res.status(409).json({ error: 'Gift card already redeemed' });
+    }
     if (card.status !== 'minted') return res.status(400).json({ error: 'Gift card not ready for redemption' });
 
     if (card.expiresAt && new Date() > new Date(card.expiresAt)) {
@@ -558,20 +583,35 @@ app.post('/api/redeem', async (req, res) => {
       return res.status(400).json({ error: 'Token does not match gift card' });
     }
 
-    await updateGiftCard(giftCardId, {
-      status: 'redeemed',
-      redeemedTo: lightningAddress,
-      redeemedAt: new Date().toISOString(),
-    });
+    // ── Atomically claim the card before paying out (GS-003) ─
+    // This UPDATE only matches a row if status is still 'minted' right now —
+    // if 5 redeem requests land at once (or the expiry job grabs this same
+    // card for a refund at the same instant), only one of them gets `claimed`
+    // back. Everyone else is told the card is already taken, before any of
+    // them touch the Lightning payment.
+    const claimed = await claimForRedeem(giftCardId, lightningAddress);
+    if (!claimed) {
+      return res.status(409).json({ error: 'Gift card already redeemed' });
+    }
 
     try {
       await payLightningAddress(lightningAddress, card.amountSats);
     } catch (payErr) {
-      console.error('payout failed, rolling back:', payErr.message);
-      await updateGiftCard(giftCardId, { status: 'minted' });
+      if (payErr.ambiguous) {
+        // We don't know if the payment actually went out (see lnd.js). Handing
+        // the card back to 'minted' here could let it be redeemed a second
+        // time on top of a payment that may have already gone through, so it
+        // stays frozen for a human to check against LND's payment history.
+        console.error(`[REVIEW NEEDED] redeem payout ambiguous for card ${giftCardId}:`, payErr.message);
+        await markRedeemUnknown(giftCardId);
+        return res.status(500).json({ error: `Payment failed: ${payErr.message}. This card has been frozen for manual review — contact support instead of retrying.` });
+      }
+      console.error('payout failed cleanly, releasing claim:', payErr.message);
+      await releaseRedeemClaim(giftCardId);
       return res.status(500).json({ error: `Payment failed: ${payErr.message}` });
     }
 
+    await finalizeRedeem(giftCardId);
     return res.json({ success: true, amountSats: card.amountSats, msg: `Sent ${card.amountSats} sats to ${lightningAddress}` });
   } catch (e) {
     console.error('redeem error:', e.message);
@@ -589,20 +629,33 @@ async function processExpiredCards() {
   for (const card of expired) {
     try {
       if (card.senderLightningAddress) {
-        await payLightningAddress(card.senderLightningAddress, card.amountSats);
-        await updateGiftCard(card.id, {
-          status: 'expired',
-          refundStatus: 'refunded',
-          redeemedTo: card.senderLightningAddress,
-          redeemedAt: new Date().toISOString(),
-        });
+        // ── Atomically claim the refund (GS-007) ───────
+        // Claims by flipping status away from 'minted', so this can't
+        // double-pay if the job overlaps itself (multiple instances, or a
+        // slow previous run still finishing) and can't race a redeem that
+        // slipped in just before the card's expiry.
+        const claimed = await claimForRefund(card.id);
+        if (!claimed) continue; // someone else already has this one
+
+        try {
+          await payLightningAddress(card.senderLightningAddress, card.amountSats);
+        } catch (payErr) {
+          if (payErr.ambiguous) {
+            // Same reasoning as the redeem route: don't guess, freeze it.
+            console.error(`[REVIEW NEEDED] [expiry] refund payout ambiguous for card ${card.id}:`, payErr.message);
+            await markRefundUnknown(card.id);
+          } else {
+            console.error(`[expiry] refund payout failed cleanly, will retry next run for card ${card.id}:`, payErr.message);
+            await releaseRefundClaim(card.id);
+          }
+          continue;
+        }
+
+        await finalizeRefund(card.id, card.senderLightningAddress);
         console.log(`[expiry] Refunded ${card.amountSats} sats → ${card.senderLightningAddress}`);
       } else {
-        await updateGiftCard(card.id, {
-          status: 'expired',
-          refundStatus: 'forfeited',
-        });
-        console.log(`[expiry] Forfeited ${card.amountSats} sats (card ${card.id})`);
+        const claimed = await claimForForfeit(card.id);
+        if (claimed) console.log(`[expiry] Forfeited ${card.amountSats} sats (card ${card.id})`);
       }
     } catch (err) {
       console.error(`[expiry] Failed to process card ${card.id}:`, err.message);

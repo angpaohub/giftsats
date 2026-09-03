@@ -57,6 +57,7 @@ function NavTab({ label, active, onClick, badge }) {
       paddingBottom: 8, paddingLeft: 0, paddingRight: 0,
       marginRight: 28, transition: 'color 0.2s',
       display: 'flex', alignItems: 'center', gap: 6,
+      whiteSpace: 'nowrap', flexShrink: 0,
     }}>
       {label.toUpperCase()}
       {badge != null && (
@@ -123,7 +124,15 @@ function CardsTable({ rows, allCards }) {
                 {/* STATUS */}
                 <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
                   {(() => {
-                    const statusColors = { minted: '#F7931A', redeemed: '#39ff14', pending: '#555' };
+                    // 'redeeming'/'refunding' are brief in-flight states (a payout is being
+                    // sent right now); 'payout_unknown'/'refund_unknown' mean a payout
+                    // attempt failed ambiguously and the card is frozen pending manual
+                    // review against LND's payment history — see the redeem/expiry code.
+                    const statusColors = {
+                      minted: '#F7931A', redeemed: '#39ff14', pending: '#555',
+                      redeeming: '#3b9eff', refunding: '#3b9eff',
+                      payout_unknown: '#ff4444', refund_unknown: '#ff4444',
+                    };
                     let displayStatus = card.status?.toUpperCase();
                     let displayColor = statusColors[card.status] || '#555';
                     // Final refund outcomes override raw status
@@ -222,7 +231,7 @@ function AdminLogin({ onSubmit }) {
 
   return (
     <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <form onSubmit={handleSubmit} style={{ width: 320, background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 32 }}>
+      <form onSubmit={handleSubmit} style={{ width: 320, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 32 }}>
         <div style={{ fontFamily: display, fontWeight: 800, fontSize: 18, color: '#F7931A', marginBottom: 4 }}>GiftSats</div>
         <div style={{ fontFamily: mono, fontSize: 10, color: '#444', letterSpacing: 2, marginBottom: 24 }}>/ ADMIN LOGIN</div>
         <input
@@ -354,9 +363,9 @@ function AdminDashboard({ adminKey, onAuthError }) {
   })();
 
   return (
-    <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', padding: 0 }}>
+    <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', padding: 0, overflowX: 'hidden' }}>
       {/* Top bar */}
-      <div style={{ borderBottom: '1px solid #111', padding: '0 40px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56, position: 'sticky', top: 0, background: '#080808', zIndex: 10 }}>
+      <div style={{ borderBottom: '1px solid #111', padding: '0 clamp(16px, 5vw, 40px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56, position: 'sticky', top: 0, background: '#080808', zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16, color: '#F7931A' }}>GiftSats</span>
           <span style={{ fontFamily: mono, fontSize: 10, color: '#222', letterSpacing: 2 }}>/ ADMIN</span>
@@ -370,9 +379,10 @@ function AdminDashboard({ adminKey, onAuthError }) {
         </div>
       </div>
 
-      <div style={{ padding: '40px' }}>
-        {/* Nav tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid #111', marginBottom: 40 }}>
+      <div style={{ padding: 'clamp(16px, 5vw, 40px)' }}>
+        {/* Nav tabs — horizontally scrollable so a narrow phone gets a swipeable
+            strip instead of the row overflowing the whole page. */}
+        <div className="gs-admin-navtabs" style={{ display: 'flex', flexWrap: 'nowrap', borderBottom: '1px solid #111', marginBottom: 40 }}>
           <NavTab label="Overview" active={tab === 'overview'} onClick={() => setTab('overview')} />
           <NavTab label="Cards" active={tab === 'cards'} onClick={() => setTab('cards')} badge={cards.length} />
           <NavTab label="Expiry" active={tab === 'expiry'} onClick={() => setTab('expiry')} badge={expiredCount > 0 ? expiredCount : expiringCount > 0 ? `${expiringCount}⚠` : null} />

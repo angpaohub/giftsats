@@ -34,6 +34,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -115,6 +116,21 @@ p {
   .gs-cta {
     order: 2;
   }
+}
+
+/* Admin dashboard nav tabs (Overview / Cards / Expiry / Marketplace / Node):
+   same treatment as .gs-navlinks above — on a narrow phone the row no
+   longer fits, so it becomes its own horizontally swipeable strip instead
+   of overflowing the whole page (which pushed the page wider than the
+   viewport and exposed the cream body background to the right of the
+   dark admin panel). */
+.gs-admin-navtabs {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.gs-admin-navtabs::-webkit-scrollbar {
+  display: none;
 }
 
 .gs-link:hover {

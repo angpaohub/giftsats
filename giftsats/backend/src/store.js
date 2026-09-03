@@ -192,6 +192,125 @@ export async function updateGiftCard(id, fields) {
   return getGiftCard(id);
 }
 
+// ── Atomic state transitions (GS-003 / GS-005 / GS-007) ──
+//
+// Every one of these is a single conditional UPDATE — "claim this row only if
+// it's still in the state I expect" — instead of the old pattern of reading a
+// row, checking its status in JS, and writing an unconditional UPDATE after.
+// That old pattern is a classic check-then-act race: two requests can both
+// read "minted" before either has written "redeemed", so both go on to pay
+// out. A conditional UPDATE closes that window because Postgres serializes
+// concurrent UPDATEs against the same row — only one caller's WHERE clause
+// can still match once the other's UPDATE has committed, so only one caller
+// ever gets a row back from RETURNING.
+//
+// The `status` column doubles as the mutual-exclusion flag between the
+// redeem flow and the expiry/refund flow, since both only ever act on a card
+// that is still 'minted': whichever one claims it first flips `status` away
+// from 'minted', so the other's UPDATE matches zero rows.
+
+// ── Redeem (GS-003) ──────────────────────────────────────
+export async function claimForRedeem(id, lightningAddress) {
+  const { rows } = await pool.query(
+    `UPDATE gift_cards SET status = 'redeeming', redeemed_to = $2
+     WHERE id = $1 AND status = 'minted' RETURNING *`,
+    [id, lightningAddress]
+  );
+  return rows[0] ? dbRowToCard(rows[0]) : null;
+}
+
+export async function finalizeRedeem(id) {
+  const { rows } = await pool.query(
+    `UPDATE gift_cards SET status = 'redeemed', redeemed_at = NOW()
+     WHERE id = $1 AND status = 'redeeming' RETURNING *`,
+    [id]
+  );
+  return rows[0] ? dbRowToCard(rows[0]) : null;
+}
+
+// The payout attempt failed in a way we can't be sure about (network error /
+// LND timeout / missing preimage — see lnd.js's `.ambiguous` flag). We do NOT
+// put the card back to 'minted' here, because if the payment actually did go
+// through, that would let it be redeemed a second time. It sits frozen until
+// a human checks LND's payment history and resolves it by hand.
+export async function markRedeemUnknown(id) {
+  await pool.query(
+    `UPDATE gift_cards SET status = 'payout_unknown' WHERE id = $1 AND status = 'redeeming'`,
+    [id]
+  );
+}
+
+// The payout attempt failed in a way we're sure means no sats left the node
+// (e.g. the address couldn't be resolved at all). Safe to hand the card back
+// so the same recipient can immediately try again.
+export async function releaseRedeemClaim(id) {
+  await pool.query(
+    `UPDATE gift_cards SET status = 'minted', redeemed_to = NULL WHERE id = $1 AND status = 'redeeming'`,
+    [id]
+  );
+}
+
+// ── Mint (GS-005) ────────────────────────────────────────
+export async function claimForMint(id, cashuToken) {
+  const { rows } = await pool.query(
+    `UPDATE gift_cards SET status = 'minted', cashu_token = $2
+     WHERE id = $1 AND status = 'pending' RETURNING *`,
+    [id, cashuToken]
+  );
+  return rows[0] ? dbRowToCard(rows[0]) : null;
+}
+
+// ── Expiry refund / forfeit (GS-007) ─────────────────────
+export async function claimForRefund(id) {
+  const { rows } = await pool.query(
+    `UPDATE gift_cards SET status = 'refunding', refund_status = 'refunding'
+     WHERE id = $1 AND status = 'minted' AND refund_status = 'none' RETURNING *`,
+    [id]
+  );
+  return rows[0] ? dbRowToCard(rows[0]) : null;
+}
+
+export async function finalizeRefund(id, refundedTo) {
+  await pool.query(
+    `UPDATE gift_cards SET status = 'expired', refund_status = 'refunded',
+       redeemed_to = $2, redeemed_at = NOW()
+     WHERE id = $1 AND status = 'refunding'`,
+    [id, refundedTo]
+  );
+}
+
+// Same ambiguous-failure handling as markRedeemUnknown above — frozen for
+// manual review instead of guessed at.
+export async function markRefundUnknown(id) {
+  await pool.query(
+    `UPDATE gift_cards SET status = 'refund_unknown', refund_status = 'refund_unknown'
+     WHERE id = $1 AND status = 'refunding'`,
+    [id]
+  );
+}
+
+// Clean failure (e.g. the sender's Lightning address stopped resolving) —
+// hand the card back to 'minted'/'none' so the next hourly run retries it,
+// same as today's behavior.
+export async function releaseRefundClaim(id) {
+  await pool.query(
+    `UPDATE gift_cards SET status = 'minted', refund_status = 'none'
+     WHERE id = $1 AND status = 'refunding'`,
+    [id]
+  );
+}
+
+// No sender address on file → nothing to pay out, so claim and finalize is
+// one safe atomic step.
+export async function claimForForfeit(id) {
+  const { rows } = await pool.query(
+    `UPDATE gift_cards SET status = 'expired', refund_status = 'forfeited'
+     WHERE id = $1 AND status = 'minted' AND refund_status = 'none' RETURNING *`,
+    [id]
+  );
+  return rows[0] ? dbRowToCard(rows[0]) : null;
+}
+
 export async function listAllCards() {
   const { rows } = await pool.query(
     'SELECT * FROM gift_cards ORDER BY created_at DESC LIMIT 500'
