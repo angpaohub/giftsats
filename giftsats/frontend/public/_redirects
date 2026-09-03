@@ -1,5 +1,7 @@
-# /card/:id is proxied to the backend so link previews (Slack, iMessage, X)
-# get OG tags. The backend serves those tags and then bounces real browsers to
-# /g/:id, which the SPA renders — that is why this line does not loop.
-/card/:id https://giftsats-production.up.railway.app/card/:id 200!
+# /card/:id used to be proxied to the backend here so link previews
+# (Slack, iMessage, X) get OG tags. That trick — a 200! rewrite to an
+# external URL — is Netlify-only; Cloudflare Pages (what this site actually
+# runs on) silently ignores it and falls through to the SPA below, which is
+# why every card link showed the same generic preview. The real proxy now
+# lives in functions/card/[id].js as a Cloudflare Pages Function.
 /* /index.html 200
