@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice } from './lnd.js';
 import {
@@ -113,10 +113,30 @@ function redeemCodeFor(id) {
   return hex.match(/.{1,4}/g)?.join('-') || '';
 }
 
+// ── Admin auth ────────────────────────────────────────────
+// Gate for every route that returns raw card/design rows or lets someone
+// change platform state. Reuses the same ADMIN_KEY already used by
+// /admin/node — no new secret to manage. The key must arrive as a header
+// (never a query string, which leaks into logs/history) and is compared as
+// a SHA-256 digest via timingSafeEqual so neither the key's length nor its
+// bytes can be inferred from response timing.
+function requireAdminKey(req, res, next) {
+  const ADMIN_KEY = process.env.ADMIN_KEY;
+  if (!ADMIN_KEY) return res.status(500).json({ error: 'ADMIN_KEY not set on server' });
+  const provided = req.get('X-Admin-Key') || '';
+  const a = createHash('sha256').update(provided).digest();
+  const b = createHash('sha256').update(ADMIN_KEY).digest();
+  if (!timingSafeEqual(a, b)) return res.status(403).json({ error: 'Forbidden' });
+  next();
+}
+
 // ── Health ──────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-// ── Stats (admin) ───────────────────────────────────────
+// ── Stats — public ───────────────────────────────────────
+// Aggregate counts only (no card ids, tokens, or PII), and it's not
+// actually admin-only: Landing.jsx and About.jsx fetch this for the public
+// "sats gifted so far" counters, so it must stay unauthenticated.
 app.get('/api/stats', async (req, res) => {
   try {
     const stats = await getStats();
@@ -126,8 +146,18 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// ── Admin: key check ─────────────────────────────────────
+// Used only by the /admin login screen to verify a key before showing the
+// dashboard. Deliberately does nothing but check the header — no LND,
+// database, or R2 call — so a temporary node/DB hiccup can never be
+// mistaken for "wrong key" the way it would if the login screen probed a
+// heavier endpoint instead.
+app.get('/api/admin/ping', requireAdminKey, (req, res) => {
+  res.json({ ok: true });
+});
+
 // ── Admin: R2 storage stats ─────────────────────────────
-app.get('/api/admin/r2-stats', async (req, res) => {
+app.get('/api/admin/r2-stats', requireAdminKey, async (req, res) => {
   try {
     const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
     let totalSize = 0;
@@ -156,7 +186,7 @@ app.get('/api/admin/r2-stats', async (req, res) => {
 });
 
 // ── Admin: list all cards ───────────────────────────────
-app.get('/api/admin/cards', async (req, res) => {
+app.get('/api/admin/cards', requireAdminKey, async (req, res) => {
   try {
     const cards = await listAllCards();
     res.json(cards);
@@ -166,7 +196,7 @@ app.get('/api/admin/cards', async (req, res) => {
 });
 
 // ── Admin: list ALL designs (incl. inactive) ────────────
-app.get('/api/admin/designs', async (req, res) => {
+app.get('/api/admin/designs', requireAdminKey, async (req, res) => {
   try {
     const designs = await listDesigns({ activeOnly: false, includePrivate: true });
     res.json(designs);
@@ -176,7 +206,7 @@ app.get('/api/admin/designs', async (req, res) => {
 });
 
 // ── Admin: takedown a design ────────────────────────────
-app.patch('/api/admin/designs/:id/takedown', async (req, res) => {
+app.patch('/api/admin/designs/:id/takedown', requireAdminKey, async (req, res) => {
   try {
     const design = await takedownDesign(req.params.id);
     if (!design) return res.status(404).json({ error: 'Design not found' });
@@ -187,7 +217,7 @@ app.patch('/api/admin/designs/:id/takedown', async (req, res) => {
 });
 
 // ── Admin: restore a taken-down design ──────────────────
-app.patch('/api/admin/designs/:id/restore', async (req, res) => {
+app.patch('/api/admin/designs/:id/restore', requireAdminKey, async (req, res) => {
   try {
     const design = await restoreDesign(req.params.id);
     if (!design) return res.status(404).json({ error: 'Design not found' });
@@ -198,7 +228,7 @@ app.patch('/api/admin/designs/:id/restore', async (req, res) => {
 });
 
 // ── Channel balance (for admin) ─────────────────────────
-app.get('/api/channel-balance', async (req, res) => {
+app.get('/api/channel-balance', requireAdminKey, async (req, res) => {
   try {
     const balance = await getChannelBalance();
     res.json(balance);

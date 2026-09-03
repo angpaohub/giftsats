@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// The admin key lives only in sessionStorage: it survives a page refresh
+// (so you don't retype it on every reload) but disappears the moment this
+// tab/window closes — it never lingers on disk the way localStorage would.
+const ADMIN_KEY_STORAGE = 'giftsats_admin_key';
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace";
 const display = "'Syne', 'Space Grotesk', sans-serif";
@@ -189,7 +194,91 @@ function CardsTable({ rows, allCards }) {
   );
 }
 
+// ── Admin key gate ───────────────────────────────────────
+// /api/admin/* and /api/channel-balance now require an X-Admin-Key header
+// (see requireAdminKey in the backend), so this screen collects the key and
+// verifies it against a real gated endpoint before showing the dashboard.
+function AdminLogin({ onSubmit }) {
+  const [value, setValue] = useState('');
+  const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!value.trim() || checking) return;
+    setChecking(true);
+    setError('');
+    const result = await onSubmit(value.trim());
+    setChecking(false);
+    if (!result.ok) {
+      setError(
+        result.reason === 'wrong'
+          ? 'Wrong admin key'
+          : 'Could not reach the server — check your connection and try again (this is not necessarily a wrong key)'
+      );
+    }
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#080808', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <form onSubmit={handleSubmit} style={{ width: 320, background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 32 }}>
+        <div style={{ fontFamily: display, fontWeight: 800, fontSize: 18, color: '#F7931A', marginBottom: 4 }}>GiftSats</div>
+        <div style={{ fontFamily: mono, fontSize: 10, color: '#444', letterSpacing: 2, marginBottom: 24 }}>/ ADMIN LOGIN</div>
+        <input
+          type="password"
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Admin key"
+          style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', background: '#000', border: '1px solid #222', borderRadius: 6, color: '#fff', fontFamily: mono, fontSize: 13, marginBottom: 12 }}
+        />
+        {error && <div style={{ fontFamily: mono, fontSize: 11, color: '#ff4444', marginBottom: 12 }}>{error}</div>}
+        <button type="submit" disabled={checking} style={{ width: '100%', padding: '10px', background: '#F7931A', border: 'none', borderRadius: 6, color: '#000', fontFamily: mono, fontWeight: 700, fontSize: 11, letterSpacing: 1, cursor: checking ? 'default' : 'pointer', opacity: checking ? 0.6 : 1 }}>
+          {checking ? 'CHECKING…' : 'ENTER'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function Admin() {
+  const [adminKey, setAdminKeyState] = useState(() => {
+    try { return sessionStorage.getItem(ADMIN_KEY_STORAGE) || ''; } catch { return ''; }
+  });
+
+  function persistKey(key) {
+    setAdminKeyState(key);
+    try { sessionStorage.setItem(ADMIN_KEY_STORAGE, key); } catch { /* private-browsing etc — key just won't survive a refresh */ }
+  }
+
+  function clearKey() {
+    setAdminKeyState('');
+    try { sessionStorage.removeItem(ADMIN_KEY_STORAGE); } catch {}
+  }
+
+  // Verifies the key against /api/admin/ping — a check-only endpoint that
+  // touches nothing but the header (no LND/DB/R2 call), so a temporary
+  // node or database hiccup can never masquerade as "wrong key" here.
+  async function handleLogin(key) {
+    try {
+      const res = await fetch(`${BACKEND}/api/admin/ping`, { headers: { 'X-Admin-Key': key } });
+      if (res.status === 403) return { ok: false, reason: 'wrong' };
+      if (!res.ok) return { ok: false, reason: 'server' };
+      persistKey(key);
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: 'network' };
+    }
+  }
+
+  if (!adminKey) {
+    return <AdminLogin onSubmit={handleLogin} />;
+  }
+
+  return <AdminDashboard adminKey={adminKey} onAuthError={clearKey} />;
+}
+
+function AdminDashboard({ adminKey, onAuthError }) {
   const [stats, setStats] = useState(null);
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -199,14 +288,26 @@ export default function Admin() {
   const [channelBalance, setChannelBalance] = useState(null);
   const [r2Stats, setR2Stats] = useState(null);
 
+  // Every admin-gated request goes through here so a wrong/revoked key
+  // bounces back to the login screen instead of silently rendering empty
+  // data. /api/stats is not gated (public), so it's called with plain fetch.
+  const adminFetch = useCallback(async (path, options = {}) => {
+    const res = await fetch(`${BACKEND}${path}`, {
+      ...options,
+      headers: { ...(options.headers || {}), 'X-Admin-Key': adminKey },
+    });
+    if (res.status === 401 || res.status === 403) onAuthError();
+    return res;
+  }, [adminKey, onAuthError]);
+
   async function fetchData() {
     setLoading(true);
     try {
       const [statsRes, cardsRes, balanceRes, r2Res] = await Promise.all([
         fetch(`${BACKEND}/api/stats`),
-        fetch(`${BACKEND}/api/admin/cards`),
-        fetch(`${BACKEND}/api/channel-balance`),
-        fetch(`${BACKEND}/api/admin/r2-stats`),
+        adminFetch('/api/admin/cards'),
+        adminFetch('/api/channel-balance'),
+        adminFetch('/api/admin/r2-stats'),
       ]);
       const statsData = await statsRes.json();
       const cardsData = cardsRes.ok ? await cardsRes.json() : [];
@@ -517,22 +618,22 @@ export default function Admin() {
 
         {/* MARKETPLACE TAB */}
         {tab === 'marketplace' && (
-          <DesignsTab BACKEND={BACKEND} mono={mono} display={display} />
+          <DesignsTab BACKEND={BACKEND} mono={mono} display={display} adminFetch={adminFetch} />
         )}
       </div>
     </div>
   );
 }
 
-function DesignsTab({ BACKEND, mono, display }) {
+function DesignsTab({ BACKEND, mono, display, adminFetch }) {
   const [designs, setDesigns] = useState([]);
   const [loading, setLoading] = useState(true);
 
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND}/api/admin/designs`);
-      const data = await res.json();
+      const res = await adminFetch('/api/admin/designs');
+      const data = res.ok ? await res.json() : [];
       setDesigns(Array.isArray(data) ? data : []);
     } catch {}
     setLoading(false);
@@ -542,12 +643,12 @@ function DesignsTab({ BACKEND, mono, display }) {
 
   async function takedown(id, name) {
     if (!confirm(`Take down "${name}"? It will be hidden from the marketplace.`)) return;
-    await fetch(`${BACKEND}/api/admin/designs/${id}/takedown`, { method: 'PATCH' });
+    await adminFetch(`/api/admin/designs/${id}/takedown`, { method: 'PATCH' });
     load();
   }
 
   async function restore(id) {
-    await fetch(`${BACKEND}/api/admin/designs/${id}/restore`, { method: 'PATCH' });
+    await adminFetch(`/api/admin/designs/${id}/restore`, { method: 'PATCH' });
     load();
   }
 
