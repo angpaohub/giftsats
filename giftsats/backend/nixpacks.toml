@@ -1,0 +1,14 @@
+# Railway builds this service with Nixpacks (no Dockerfile in this repo).
+# The default Nixpacks Node image ships with no system fonts at all, so
+# sharp's SVG-to-PNG rendering in src/ogImage.js — which draws text via
+# font-family names (Liberation Sans, monospace, Georgia/serif) resolved
+# through fontconfig — silently renders that text as nothing. Only the
+# hand-drawn SVG shapes (the bolt mark) survived; everything drawn with
+# <text> (wordmark, the big sats amount, message, credit line) did not,
+# because on Railway there's no matching font installed to draw it with.
+#
+# These two apt packages provide exactly the font families ogImage.js
+# already asks for, so no code changes are needed — just make the fonts
+# available at build time.
+[phases.setup]
+aptPkgs = ["fonts-liberation", "fonts-dejavu-core"]
