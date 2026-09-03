@@ -60,7 +60,12 @@ export function feeLimitSatsFor(amountSats) {
 // `.ambiguous = true` and must not be treated as "safe to retry
 // automatically", since the sats may already be gone. Everything thrown
 // before this call is a clean failure (nothing was ever sent).
-async function sendPayment(paymentRequest, amountSatsForFeeLimit) {
+// `amtSats`: only for a zero-amount ("amountless") invoice, where the payer
+// — us — is the one who decides how much to send. LND rejects `amt` outright
+// on an invoice that already encodes an amount, so this is never a way to
+// override what a fixed-amount invoice says; it only fills in the blank on
+// one that has none.
+async function sendPayment(paymentRequest, amountSatsForFeeLimit, amtSats) {
   let payRes;
   try {
     payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
@@ -68,6 +73,7 @@ async function sendPayment(paymentRequest, amountSatsForFeeLimit) {
       body: JSON.stringify({
         payment_request: paymentRequest,
         fee_limit: { fixed: String(feeLimitSatsFor(amountSatsForFeeLimit)) },
+        ...(amtSats ? { amt: String(amtSats) } : {}),
       }),
     });
   } catch (networkErr) {
@@ -147,11 +153,14 @@ export async function payLightningAddress(lightningAddress, amountSats) {
 // asserted its amount against the card's own amount (see
 // validateRedeemInvoice in index.js) before calling this. Passing a
 // user-supplied invoice straight in is a direct path to draining the node.
-export async function payInvoice(bolt11, expectedAmountSats) {
+// `amtSats`: pass this only when the invoice being paid is zero-amount (see
+// sendPayment above) — it must be the card's own already-validated amount,
+// never anything read from the request body.
+export async function payInvoice(bolt11, expectedAmountSats, amtSats) {
   if (!Number.isInteger(expectedAmountSats) || expectedAmountSats <= 0) {
     throw new Error('payInvoice requires the already-validated amount for its fee limit');
   }
-  return sendPayment(bolt11, expectedAmountSats);
+  return sendPayment(bolt11, expectedAmountSats, amtSats);
 }
 
 export async function getChannelBalance() {

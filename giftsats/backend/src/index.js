@@ -629,15 +629,21 @@ async function validateRedeemInvoice(bolt11, expectedSats) {
   }
 
   // An amountless ("zero-amount") invoice leaves the amount for the payer to
-  // fill in. We never want to be the one deciding how much a stranger's
-  // invoice is for, so these are refused outright rather than topped up.
+  // fill in — and here, we are the payer. This is different from a
+  // fixed-amount invoice: there we're trusting a number a stranger wrote, so
+  // it has to match exactly. Here nobody else's number is involved at all —
+  // we tell LND what to send (see the `amt` field in lnd.js's sendPayment),
+  // so paying our own card amount into a zero-amount invoice carries none of
+  // the "invoice lied about its amount" risk that this whole file exists to
+  // guard against. LND itself enforces the other half: it refuses `amt` on
+  // any invoice that already encodes one, so this can never be used to
+  // override a fixed amount — only to fill in an invoice that has none.
   const invoiceMsat = Number(decoded.num_msat || 0);
-  if (!invoiceMsat) {
-    throw badRequest(400, 'This invoice has no amount set. Please create one for exactly ' + expectedSats.toLocaleString('en-US') + ' sats.');
-  }
+  const isZeroAmount = invoiceMsat === 0;
 
-  // THE check. Exact equality, in millisats, against the card's own amount
-  // read from the database — never against anything the client sent.
+  // THE check, for a fixed-amount invoice only. Exact equality, in millisats,
+  // against the card's own amount read from the database — never against
+  // anything the client sent.
   //
   // Not `<=`: an invoice for less than the card is worth would quietly burn
   // the difference, because a card is single-use and there is no partial
@@ -646,9 +652,9 @@ async function validateRedeemInvoice(bolt11, expectedSats) {
   // Millisats rather than `num_satoshis`: that field truncates, so an invoice
   // for 1,000,999 msat would pass a sat-level comparison against a 1,000-sat
   // card.
-  if (invoiceMsat !== expectedSats * 1000) {
+  if (!isZeroAmount && invoiceMsat !== expectedSats * 1000) {
     const invoiceSats = invoiceMsat / 1000;
-    throw badRequest(400, `This invoice is for ${invoiceSats.toLocaleString('en-US')} sats, but this card is worth ${expectedSats.toLocaleString('en-US')} sats. Please create an invoice for exactly ${expectedSats.toLocaleString('en-US')} sats.`);
+    throw badRequest(400, `This invoice is for ${invoiceSats.toLocaleString('en-US')} sats, but this card is worth ${expectedSats.toLocaleString('en-US')} sats. Please create one for exactly ${expectedSats.toLocaleString('en-US')} sats, or leave the amount blank.`);
   }
 
   // An expired invoice can't be paid, and a nearly-expired one can expire
@@ -677,7 +683,7 @@ async function validateRedeemInvoice(bolt11, expectedSats) {
     throw badRequest(503, 'Could not verify the invoice right now. Please try again in a moment.');
   }
 
-  return decoded;
+  return { decoded, isZeroAmount };
 }
 
 // ── Redeem gift card ─────────────────────────────────────
@@ -726,8 +732,9 @@ app.post('/api/redeem', async (req, res) => {
     // using this route to hammer the node (GS-010 — there is still no rate
     // limiting anywhere).
     let decodedInvoice = null;
+    let invoiceIsZeroAmount = false;
     if (bolt11) {
-      decodedInvoice = await validateRedeemInvoice(bolt11, card.amountSats);
+      ({ decoded: decodedInvoice, isZeroAmount: invoiceIsZeroAmount } = await validateRedeemInvoice(bolt11, card.amountSats));
     }
 
     // ── Atomically claim the card before paying out (GS-003) ─
@@ -747,11 +754,14 @@ app.post('/api/redeem', async (req, res) => {
         // earlier. Same value in practice — amount_sats never changes — but it
         // means the amount we pay is tied to the exact row this payout is
         // authorised by, and it costs nothing (the invoice is already decoded).
-        if (Number(decodedInvoice.num_msat) !== claimed.amountSats * 1000) {
+        // Zero-amount invoices have nothing to re-assert here — see
+        // validateRedeemInvoice's note on why that's fine: we supply the
+        // amount ourselves via `amt` below, we're not trusting the invoice.
+        if (!invoiceIsZeroAmount && Number(decodedInvoice.num_msat) !== claimed.amountSats * 1000) {
           await releaseRedeemClaim(giftCardId);
           return res.status(400).json({ error: 'Invoice amount does not match this card' });
         }
-        await payInvoice(bolt11, claimed.amountSats);
+        await payInvoice(bolt11, claimed.amountSats, invoiceIsZeroAmount ? claimed.amountSats : undefined);
       } else {
         await payLightningAddress(lightningAddress, claimed.amountSats);
       }

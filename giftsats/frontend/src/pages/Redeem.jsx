@@ -429,15 +429,18 @@ export default function Redeem() {
 
                   {payoutMode === 'invoice' ? (
                     <>
-                      {/* A BOLT11 invoice carries its own amount, and the card
-                          pays out its own amount or nothing — so the number has
-                          to be exact. Showing it copyable here is what makes
-                          that workable, since the user is typing it into their
-                          wallet on another screen. */}
+                      {/* A fixed-amount invoice has to match the card exactly —
+                          the card pays out its own amount or nothing, so a
+                          wrong number is refused rather than topped up or
+                          partially spent. Leaving the amount blank works too:
+                          then we fill it in ourselves, so there's nothing to
+                          get wrong. Showing the number copyable here is what
+                          makes the "set it yourself" path workable, since the
+                          user is typing it into their wallet on another screen. */}
                       <Notice tone="info">
                         In your wallet, create an invoice for exactly{' '}
-                        <strong>{fmt(card.amountSats)} sats</strong>, then paste it below. Invoices are
-                        single-use and expire — make it right before you paste it.
+                        <strong>{fmt(card.amountSats)} sats</strong> — or leave the amount blank — then paste it
+                        below. Invoices are single-use and expire — make it right before you paste it.
                       </Notice>
                       <div style={{ margin: '12px 0' }}>
                         <CopyButton value={String(card.amountSats)} label={`Copy ${fmt(card.amountSats)}`} block />

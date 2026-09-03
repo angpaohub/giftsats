@@ -276,11 +276,13 @@ export default function GiftLink() {
                   <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
                     Paste your invoice
                   </div>
-                  {/* A BOLT11 invoice carries its own amount, and this card pays
-                      out its own amount or nothing — so it has to be exact. */}
+                  {/* A fixed-amount invoice has to match the card exactly — this
+                      card pays out its own amount or nothing. Leaving the
+                      amount blank works too: we fill it in ourselves. */}
                   <Notice tone="info">
-                    In your wallet, create an invoice for exactly <strong>{fmt(card.amountSats)} sats</strong>,
-                    then paste it below. Invoices are single-use and expire — make it right before you paste it.
+                    In your wallet, create an invoice for exactly <strong>{fmt(card.amountSats)} sats</strong> — or
+                    leave the amount blank — then paste it below. Invoices are single-use and expire — make it
+                    right before you paste it.
                   </Notice>
                   <div style={{ margin: '12px 0' }}>
                     <CopyButton value={String(card.amountSats)} label={`Copy ${fmt(card.amountSats)}`} block />
