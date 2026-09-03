@@ -33,6 +33,18 @@ export function shortCode(id) {
 export const isLightningAddress = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 export const isEmail = isLightningAddress;
 
+// Strip what wallets and QR codes wrap around a raw invoice: the `lightning:`
+// URI scheme, pasted whitespace/newlines, and the uppercase bech32 that QR
+// encoders emit. Mirrors normalizeBolt11() on the backend — the backend does
+// it again regardless, this is only so what we validate is what we send.
+export const normalizeBolt11 = (v) =>
+  String(v || '').trim().replace(/\s+/g, '').replace(/^lightning:/i, '').toLowerCase();
+
+// Shape check only. The amount, expiry and destination are all checked by the
+// backend against the card (it decodes the invoice with our own node) — this
+// just avoids sending an obvious non-invoice.
+export const isBolt11 = (v) => /^ln(bc|tb|bcrt|tbs)[a-z0-9]{50,}$/.test(normalizeBolt11(v));
+
 // A card's full id is itself what /api/redeem accepts as giftCardId — there
 // is no separate secret/key. Whoever holds this complete link can redeem.
 export const cardUrl = (id) => `${window.location.origin}/card/${id}`;

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
-import { T, Input, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
+import { T, Input, Textarea, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
+import CopyButton from '../components/CopyButton.jsx';
 import { api, resolveCard } from '../lib/api.js';
 import { resolveArt } from '../lib/designs.js';
-import { cardUrl, fmt, isLightningAddress } from '../lib/format.js';
+import { cardUrl, fmt, isLightningAddress, isBolt11, normalizeBolt11 } from '../lib/format.js';
 
 const METHODS = [
   { id: 'scan', label: 'Scan' },
@@ -29,6 +30,13 @@ export default function Redeem() {
   const [card, setCard] = useState(null);
   const [design, setDesign] = useState(null);
   const [address, setAddress] = useState('');
+  // Wallets split into two camps: those that give you a Lightning address
+  // (Wallet of Satoshi, Alby, Blink) and those where the only way to receive
+  // is an invoice you generate per payment (Phoenix, and any node running
+  // itself). 'address' stays the default because it's the one that survives
+  // being pasted an hour later.
+  const [payoutMode, setPayoutMode] = useState('address'); // 'address' | 'invoice'
+  const [invoice, setInvoice] = useState('');
   const [status, setStatus] = useState(null); // {tone, msg}
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -125,16 +133,26 @@ export default function Redeem() {
   }
 
   async function redeem() {
-    if (!card || !card.id || !isLightningAddress(address)) return;
+    if (!card || !card.id || !destinationOk) return;
     setBusy(true);
     setStatus(null);
     try {
       const res = await api.redeem({
-        lightningAddress: address.trim(),
         giftCardId: card.id,
+        // Exactly one of these — the backend rejects both being present, so
+        // that what the user confirmed on screen is what gets paid.
+        ...(payoutMode === 'invoice'
+          ? { bolt11: normalizeBolt11(invoice) }
+          : { lightningAddress: address.trim() }),
       });
       setDone(true);
-      setStatus({ tone: 'good', msg: `${fmt(res.amountSats)} sats sent to ${address.trim()}.` });
+      setStatus({
+        tone: 'good',
+        msg:
+          payoutMode === 'invoice'
+            ? `${fmt(res.amountSats)} sats sent — your invoice is paid.`
+            : `${fmt(res.amountSats)} sats sent to ${address.trim()}.`,
+      });
     } catch (e) {
       setStatus({
         tone: 'bad',
@@ -143,7 +161,12 @@ export default function Redeem() {
             ? 'This card has already been redeemed.'
             : e.status === 410
               ? 'This card has expired.'
-              : `${e.message} — the sats are still on the card, try another address.`,
+              : // 400s from invoice validation (wrong amount, expired, not a
+                // real invoice) already say exactly what to fix, so they are
+                // shown as-is rather than wrapped in generic advice.
+                e.status === 400
+                ? e.message
+                : `${e.message} — the sats are still on the card, try another address.`,
       });
     } finally {
       setBusy(false);
@@ -154,6 +177,8 @@ export default function Redeem() {
     setCard(null);
     setDesign(null);
     setAddress('');
+    setInvoice('');
+    setPayoutMode('address');
     setCode('');
     setDone(false);
     setStatus(null);
@@ -163,7 +188,8 @@ export default function Redeem() {
   // A card looked up by its printed short code never carries an id in the
   // response (see includeId in the backend's publicCard()) — only a card
   // reached via its full link/QR (scan or photo upload) can be redeemed.
-  const ready = !!card && !!card.id && isLightningAddress(address) && !busy;
+  const destinationOk = payoutMode === 'invoice' ? isBolt11(invoice) : isLightningAddress(address);
+  const ready = !!card && !!card.id && destinationOk && !busy;
 
   return (
     <Page maxWidth={980} title="Redeem">
@@ -371,44 +397,106 @@ export default function Redeem() {
               ) : (
                 <>
                   <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
-                    Your Lightning address
+                    Where should the sats go?
                   </div>
-                  <Input
-                    placeholder="you@walletofsatoshi.com"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    style={{ fontFamily: T.mono, fontSize: 14.5 }}
-                  />
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                    {WALLET_DOMAINS.map((d) => (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                    {[
+                      { id: 'address', label: 'Lightning address' },
+                      { id: 'invoice', label: 'Invoice' },
+                    ].map((m) => (
                       <button
-                        key={d}
+                        key={m.id}
                         type="button"
                         className="gs-outline"
-                        onClick={() => setAddress((a) => `${a.split('@')[0] || 'you'}${d}`)}
+                        onClick={() => {
+                          setPayoutMode(m.id);
+                          setStatus(null);
+                        }}
                         style={{
-                          fontFamily: T.mono,
-                          fontSize: 12,
-                          padding: '7px 12px',
-                          borderRadius: 999,
-                          border: `1px solid ${T.hair16}`,
-                          color: T.text2,
-                          transition: 'border-color .15s',
+                          flex: 1,
+                          fontSize: 13,
+                          padding: '9px 12px',
+                          borderRadius: 10,
+                          border: `1px solid ${payoutMode === m.id ? T.text2 : T.hair16}`,
+                          color: payoutMode === m.id ? T.text : T.text2,
+                          transition: 'border-color .15s, color .15s',
                         }}
                       >
-                        {d}
+                        {m.label}
                       </button>
                     ))}
                   </div>
+
+                  {payoutMode === 'invoice' ? (
+                    <>
+                      {/* A BOLT11 invoice carries its own amount, and the card
+                          pays out its own amount or nothing — so the number has
+                          to be exact. Showing it copyable here is what makes
+                          that workable, since the user is typing it into their
+                          wallet on another screen. */}
+                      <Notice tone="info">
+                        In your wallet, create an invoice for exactly{' '}
+                        <strong>{fmt(card.amountSats)} sats</strong>, then paste it below. Invoices are
+                        single-use and expire — make it right before you paste it.
+                      </Notice>
+                      <div style={{ margin: '12px 0' }}>
+                        <CopyButton value={String(card.amountSats)} label={`Copy ${fmt(card.amountSats)}`} block />
+                      </div>
+                      <Textarea
+                        rows={3}
+                        placeholder="lnbc…"
+                        value={invoice}
+                        onChange={(e) => setInvoice(e.target.value)}
+                        style={{ fontFamily: T.mono, fontSize: 12.5, lineHeight: 1.5, resize: 'vertical' }}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Input
+                        placeholder="you@walletofsatoshi.com"
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        style={{ fontFamily: T.mono, fontSize: 14.5 }}
+                      />
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                        {WALLET_DOMAINS.map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            className="gs-outline"
+                            onClick={() => setAddress((a) => `${a.split('@')[0] || 'you'}${d}`)}
+                            style={{
+                              fontFamily: T.mono,
+                              fontSize: 12,
+                              padding: '7px 12px',
+                              borderRadius: 999,
+                              border: `1px solid ${T.hair16}`,
+                              color: T.text2,
+                              transition: 'border-color .15s',
+                            }}
+                          >
+                            {d}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
 
                   <PrimaryButton onClick={redeem} disabled={!ready} style={{ width: '100%', marginTop: 18 }}>
                     {busy ? 'Sending sats…' : 'Redeem to my wallet'}
                   </PrimaryButton>
                   <div style={{ marginTop: 12, fontSize: 13.5, color: T.mutedWarm, textAlign: 'center' }}>
-                    {isLightningAddress(address)
+                    {destinationOk
                       ? 'Sats leave the card the moment you tap.'
-                      : 'Enter a valid Lightning address.'}
+                      : payoutMode === 'invoice'
+                        ? `Paste an invoice for exactly ${fmt(card.amountSats)} sats.`
+                        : 'Enter a valid Lightning address.'}
                   </div>
+                  {payoutMode === 'invoice' && (
+                    <div style={{ marginTop: 8, fontSize: 12.5, color: T.mutedWarm, textAlign: 'center' }}>
+                      Using Phoenix or your own node? This is the option for you.
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={reset}

@@ -5,7 +5,7 @@ import multer from 'multer';
 import path from 'path';
 import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice } from './lnd.js';
+import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice, decodeInvoice, getOwnPubkey } from './lnd.js';
 import {
   initDB, createGiftCard, getGiftCard, getGiftCardByCode, updateGiftCard, getStats,
   listAllCards, listExpiredUnredeemed,
@@ -579,17 +579,128 @@ app.get('/api/gift/code/:code', async (req, res) => {
   }
 });
 
+// ── BOLT11 redemption ────────────────────────────────────
+//
+// Wallets like Phoenix have no Lightning address at all — the only way to
+// receive is to hand over an invoice. So a card can be redeemed to either a
+// Lightning address or a BOLT11 invoice.
+//
+// The two are NOT symmetrical, and this is the whole reason this block
+// exists. With a Lightning address, *we* tell the recipient's server how many
+// sats to invoice us for, so the amount is ours to decide. With a BOLT11
+// invoice, the amount is baked into the invoice by the person redeeming, and
+// LND will pay whatever it says — it has no notion of a maximum. Nothing in
+// the Lightning stack stops a 1,000-sat card from paying out a 5,000,000-sat
+// invoice; the only thing that stops it is the check below. Treat this
+// function as the money-critical part of the redeem path.
+
+// Strip the things wallets and QR codes add around the raw invoice: a
+// `lightning:` URI scheme, surrounding whitespace/newlines from a paste, and
+// the uppercase bech32 that QR encoders emit (bech32 is case-insensitive but
+// LND wants one case).
+function normalizeBolt11(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/^lightning:/i, '')
+    .toLowerCase();
+}
+
+function badRequest(status, message) {
+  const err = new Error(message);
+  err.httpStatus = status;
+  return err;
+}
+
+// Decodes the invoice with our own node and refuses it unless it is *exactly*
+// what this card is worth. Returns the decoded invoice so the caller can
+// re-assert against the row it actually claimed, without a second round trip.
+async function validateRedeemInvoice(bolt11, expectedSats) {
+  if (bolt11.length > 2000) throw badRequest(400, 'That invoice is too long to be valid.');
+  if (!/^ln[a-z0-9]+$/.test(bolt11)) throw badRequest(400, 'That does not look like a Lightning invoice.');
+
+  // LND does the decoding — see the note on decodeInvoice() in lnd.js for why
+  // it must be the same node that will spend the money.
+  let decoded;
+  try {
+    decoded = await decodeInvoice(bolt11);
+  } catch {
+    throw badRequest(400, 'That invoice could not be read. Check that you copied all of it.');
+  }
+
+  // An amountless ("zero-amount") invoice leaves the amount for the payer to
+  // fill in. We never want to be the one deciding how much a stranger's
+  // invoice is for, so these are refused outright rather than topped up.
+  const invoiceMsat = Number(decoded.num_msat || 0);
+  if (!invoiceMsat) {
+    throw badRequest(400, 'This invoice has no amount set. Please create one for exactly ' + expectedSats.toLocaleString('en-US') + ' sats.');
+  }
+
+  // THE check. Exact equality, in millisats, against the card's own amount
+  // read from the database — never against anything the client sent.
+  //
+  // Not `<=`: an invoice for less than the card is worth would quietly burn
+  // the difference, because a card is single-use and there is no partial
+  // redemption. Refusing is the honest outcome.
+  //
+  // Millisats rather than `num_satoshis`: that field truncates, so an invoice
+  // for 1,000,999 msat would pass a sat-level comparison against a 1,000-sat
+  // card.
+  if (invoiceMsat !== expectedSats * 1000) {
+    const invoiceSats = invoiceMsat / 1000;
+    throw badRequest(400, `This invoice is for ${invoiceSats.toLocaleString('en-US')} sats, but this card is worth ${expectedSats.toLocaleString('en-US')} sats. Please create an invoice for exactly ${expectedSats.toLocaleString('en-US')} sats.`);
+  }
+
+  // An expired invoice can't be paid, and a nearly-expired one can expire
+  // mid-payment — which would land us in the ambiguous-failure path and
+  // freeze the card for manual review over what is really just a stale paste.
+  const expiresAtSec = Number(decoded.timestamp || 0) + Number(decoded.expiry || 0);
+  if (!expiresAtSec || expiresAtSec - 60 < Math.floor(Date.now() / 1000)) {
+    throw badRequest(400, 'This invoice has expired. Lightning invoices are single-use and short-lived — please create a fresh one.');
+  }
+
+  // Refuse invoices issued by our own node. Without this, someone could take
+  // the `payment_request` of any *other* gift card (creating a card is free
+  // and public) and redeem their own card "to" it — our node would settle
+  // that second card's invoice, minting it as paid without anyone ever having
+  // paid for it.
+  try {
+    const ownPubkey = await getOwnPubkey();
+    if (ownPubkey && decoded.destination === ownPubkey) {
+      throw badRequest(400, 'That invoice was issued by GiftSats itself. Please use an invoice from your own wallet.');
+    }
+  } catch (e) {
+    if (e.httpStatus) throw e;
+    // Couldn't reach our node to find out. Refusing is the safe default here:
+    // the check exists precisely to stop a free-money path, so skipping it
+    // "just this once" is exactly the wrong call.
+    throw badRequest(503, 'Could not verify the invoice right now. Please try again in a moment.');
+  }
+
+  return decoded;
+}
+
 // ── Redeem gift card ─────────────────────────────────────
 app.post('/api/redeem', async (req, res) => {
   try {
     const { lightningAddress, giftCardId } = req.body;
-    if (!lightningAddress) return res.status(400).json({ error: 'Lightning address required' });
+    const bolt11 = normalizeBolt11(req.body.bolt11);
     if (!giftCardId) return res.status(400).json({ error: 'Gift card ID required' });
+
+    // Exactly one destination. Accepting both and picking one would mean the
+    // address the user sees confirmed in the UI might not be the one that
+    // gets paid.
+    if (lightningAddress && bolt11) {
+      return res.status(400).json({ error: 'Provide either a Lightning address or an invoice, not both' });
+    }
+    if (!lightningAddress && !bolt11) {
+      return res.status(400).json({ error: 'Lightning address or invoice required' });
+    }
     // Same format check already used for designer/sender addresses elsewhere
     // (GS-006) — the redeem endpoint was the one place this was missing,
     // and its address goes straight into an outbound payment lookup.
     const lnAddrRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-    if (!lnAddrRegex.test(lightningAddress)) {
+    if (lightningAddress && !lnAddrRegex.test(lightningAddress)) {
       return res.status(400).json({ error: 'Invalid Lightning address format' });
     }
 
@@ -608,19 +719,42 @@ app.post('/api/redeem', async (req, res) => {
     // is the credential (see publicCard()'s includeId comment above). There
     // is deliberately no separate secret/key check here.
 
+    // Validate the invoice before claiming, so a typo or a stale invoice
+    // doesn't briefly take the card out of circulation. Deliberately placed
+    // after the card lookup above: decoding calls our own node, so gating it
+    // behind "you named a real, still-redeemable card" keeps a stranger from
+    // using this route to hammer the node (GS-010 — there is still no rate
+    // limiting anywhere).
+    let decodedInvoice = null;
+    if (bolt11) {
+      decodedInvoice = await validateRedeemInvoice(bolt11, card.amountSats);
+    }
+
     // ── Atomically claim the card before paying out (GS-003) ─
     // This UPDATE only matches a row if status is still 'minted' right now —
     // if 5 redeem requests land at once (or the expiry job grabs this same
     // card for a refund at the same instant), only one of them gets `claimed`
     // back. Everyone else is told the card is already taken, before any of
     // them touch the Lightning payment.
-    const claimed = await claimForRedeem(giftCardId, lightningAddress);
+    const claimed = await claimForRedeem(giftCardId, lightningAddress || `bolt11:${decodedInvoice.payment_hash}`);
     if (!claimed) {
       return res.status(409).json({ error: 'Gift card already redeemed' });
     }
 
     try {
-      await payLightningAddress(lightningAddress, card.amountSats);
+      if (bolt11) {
+        // Re-assert against the row we actually claimed, not the row we read
+        // earlier. Same value in practice — amount_sats never changes — but it
+        // means the amount we pay is tied to the exact row this payout is
+        // authorised by, and it costs nothing (the invoice is already decoded).
+        if (Number(decodedInvoice.num_msat) !== claimed.amountSats * 1000) {
+          await releaseRedeemClaim(giftCardId);
+          return res.status(400).json({ error: 'Invoice amount does not match this card' });
+        }
+        await payInvoice(bolt11, claimed.amountSats);
+      } else {
+        await payLightningAddress(lightningAddress, claimed.amountSats);
+      }
     } catch (payErr) {
       if (payErr.ambiguous) {
         // We don't know if the payment actually went out (see lnd.js). Handing
@@ -637,8 +771,13 @@ app.post('/api/redeem', async (req, res) => {
     }
 
     await finalizeRedeem(giftCardId);
-    return res.json({ success: true, amountSats: card.amountSats, msg: `Sent ${card.amountSats} sats to ${lightningAddress}` });
+    const destinationLabel = lightningAddress || 'your invoice';
+    return res.json({ success: true, amountSats: claimed.amountSats, msg: `Sent ${claimed.amountSats} sats to ${destinationLabel}` });
   } catch (e) {
+    // Invoice validation failures are the user's problem to fix (wrong
+    // amount, expired, unreadable), not a server fault — they carry their own
+    // status and a message meant to be shown as-is.
+    if (e.httpStatus) return res.status(e.httpStatus).json({ error: e.message });
     console.error('redeem error:', e.message);
     res.status(500).json({ error: e.message });
   }
@@ -833,7 +972,13 @@ app.post('/api/admin/pay', requireAdminKey, async (req, res) => {
       if (!amountSats) return res.status(400).json({ error: 'Amount required for Lightning address' });
       result = await payLightningAddress(destination, amountSats);
     } else if (destination.toLowerCase().startsWith('lnbc') || destination.toLowerCase().startsWith('lntb')) {
-      result = await payInvoice(destination);
+      // payInvoice now needs the amount for its routing-fee ceiling. This is
+      // the admin's own deliberate payout, so the invoice's own amount is the
+      // basis — but it still has to be a fixed-amount invoice.
+      const decoded = await decodeInvoice(destination);
+      const invoiceSats = Math.ceil(Number(decoded.num_msat || 0) / 1000);
+      if (!invoiceSats) return res.status(400).json({ error: 'Amountless invoice — use an invoice with a fixed amount' });
+      result = await payInvoice(destination, invoiceSats);
     } else {
       return res.status(400).json({ error: 'Unrecognized destination — must be a bolt11 invoice or Lightning address' });
     }

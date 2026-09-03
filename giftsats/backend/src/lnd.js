@@ -36,33 +36,39 @@ export async function checkPayment(paymentHash) {
   return data.state === 'SETTLED';
 }
 
-export async function payLightningAddress(lightningAddress, amountSats) {
-  const [user, domain] = lightningAddress.split('@');
-  if (!user || !domain) throw new Error('Invalid Lightning address');
-  // No `agent` here on purpose — these two calls go to a server we don't
-  // control (the recipient's wallet provider), so they must use normal,
-  // verified HTTPS, not the LND-only insecure agent above.
-  const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`);
-  if (!lnurlRes.ok) throw new Error('Could not resolve Lightning address');
-  const lnurlData = await lnurlRes.json();
-  const amountMsats = amountSats * 1000;
-  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`);
-  if (!invoiceRes.ok) throw new Error('Could not get invoice');
-  const { pr } = await invoiceRes.json();
+// Routing-fee ceiling for anything we pay out. Without this, LND will happily
+// spend whatever a route costs, and the payee picks the route — with a
+// user-supplied BOLT11 invoice that means an attacker can point us through a
+// channel of their own that charges an enormous fee and pocket the difference,
+// even when the invoice amount itself is exactly right. 1% (min 5 sats) is
+// generous for Lightning while capping that.
+export function feeLimitSatsFor(amountSats) {
+  return Math.max(5, Math.ceil(amountSats * 0.01));
+}
 
-  // Past this point we're asking our own LND node to actually move funds.
-  // If anything goes wrong from here on, we can't always be sure whether the
-  // payment went out anyway (a timed-out HTTP call, or a response that came
-  // back before LND itself resolved the payment) — so these failures are
-  // tagged `.ambiguous = true`. Callers (redeem/refund) must not treat an
-  // ambiguous failure as "safe to retry automatically", since the sats may
-  // already be gone; everything thrown before this point is a clean failure
-  // (nothing was ever sent) and is safe to retry.
+// ── Shared outbound payment ──────────────────────────────
+// Both payout paths (Lightning address and BOLT11 invoice) funnel through
+// here so the ambiguous-failure contract below is identical for both. Callers
+// (redeem/refund) rely on `.ambiguous` to decide between "safe to retry" and
+// "freeze this card for a human" — a payout path that forgot to tag its
+// errors would silently lose the GS-003 double-spend protection.
+//
+// Past this point we're asking our own LND node to actually move funds. If
+// anything goes wrong from here on, we can't always be sure whether the
+// payment went out anyway (a timed-out HTTP call, or a response that came
+// back before LND itself resolved the payment) — so those failures are tagged
+// `.ambiguous = true` and must not be treated as "safe to retry
+// automatically", since the sats may already be gone. Everything thrown
+// before this call is a clean failure (nothing was ever sent).
+async function sendPayment(paymentRequest, amountSatsForFeeLimit) {
   let payRes;
   try {
     payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
       method: 'POST', agent, headers,
-      body: JSON.stringify({ payment_request: pr }),
+      body: JSON.stringify({
+        payment_request: paymentRequest,
+        fee_limit: { fixed: String(feeLimitSatsFor(amountSatsForFeeLimit)) },
+      }),
     });
   } catch (networkErr) {
     const err = new Error(`LND pay request failed: ${networkErr.message}`);
@@ -89,20 +95,63 @@ export async function payLightningAddress(lightningAddress, amountSats) {
   return payData;
 }
 
-export async function payInvoice(bolt11) {
-  const payRes = await fetch(`${LND_URL}/v1/channels/transactions`, {
-    method: 'POST', agent, headers,
-    body: JSON.stringify({ payment_request: bolt11 }),
-  });
-  if (!payRes.ok) throw new Error(`LND pay error: ${await payRes.text()}`);
-  const payData = await payRes.json();
-  if (payData.payment_error) {
-    throw new Error(`LND routing failed: ${payData.payment_error}`);
+// ── BOLT11 decoding ──────────────────────────────────────
+// Decoded by LND itself rather than a local bolt11 parser on purpose: the
+// node that will actually spend the money is the only authority on what this
+// invoice says. A separate parser could disagree with LND about the amount —
+// and a disagreement about the amount is exactly the bug that would let a
+// card pay out more than it is worth.
+export async function decodeInvoice(bolt11) {
+  const res = await fetch(`${LND_URL}/v1/payreq/${encodeURIComponent(bolt11)}`, { agent, headers });
+  if (!res.ok) {
+    throw new Error('That does not look like a valid Lightning invoice.');
   }
-  if (!payData.payment_preimage) {
-    throw new Error('LND payment did not return a preimage — payment likely failed');
+  return res.json();
+}
+
+// Our own node's pubkey, cached for the process. Used to refuse invoices
+// issued by this very node — see the self-payment check in index.js.
+let ownPubkeyCache = null;
+export async function getOwnPubkey() {
+  if (ownPubkeyCache) return ownPubkeyCache;
+  const info = await getNodeInfo();
+  ownPubkeyCache = info.identity_pubkey;
+  return ownPubkeyCache;
+}
+
+export async function payLightningAddress(lightningAddress, amountSats) {
+  const [user, domain] = lightningAddress.split('@');
+  if (!user || !domain) throw new Error('Invalid Lightning address');
+  // No `agent` here on purpose — these two calls go to a server we don't
+  // control (the recipient's wallet provider), so they must use normal,
+  // verified HTTPS, not the LND-only insecure agent above.
+  const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`);
+  if (!lnurlRes.ok) throw new Error('Could not resolve Lightning address');
+  const lnurlData = await lnurlRes.json();
+  const amountMsats = amountSats * 1000;
+  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`);
+  if (!invoiceRes.ok) throw new Error('Could not get invoice');
+  const { pr } = await invoiceRes.json();
+
+  // The invoice we just fetched is for `amountSats` because that's the amount
+  // we asked the LNURL callback for, so it doubles as the fee-limit basis.
+  return sendPayment(pr, amountSats);
+}
+
+// Pay a BOLT11 invoice supplied by someone else.
+//
+// SECURITY: this function pays whatever the invoice says. LND has no concept
+// of "don't spend more than X" for a payment request — the amount inside the
+// invoice is the authority, and the person redeeming a card is the person who
+// created that invoice. Every caller MUST have already decoded the invoice and
+// asserted its amount against the card's own amount (see
+// validateRedeemInvoice in index.js) before calling this. Passing a
+// user-supplied invoice straight in is a direct path to draining the node.
+export async function payInvoice(bolt11, expectedAmountSats) {
+  if (!Number.isInteger(expectedAmountSats) || expectedAmountSats <= 0) {
+    throw new Error('payInvoice requires the already-validated amount for its fee limit');
   }
-  return payData;
+  return sendPayment(bolt11, expectedAmountSats);
 }
 
 export async function getChannelBalance() {
