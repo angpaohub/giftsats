@@ -5,6 +5,13 @@ dotenv.config();
 
 const LND_URL = process.env.LND_REST_URL;
 const MACAROON = process.env.LND_MACAROON_HEX;
+
+// LND's REST endpoint uses a self-signed cert, so *only* calls to our own
+// node skip certificate verification. Every call that leaves our
+// infrastructure (resolving a Lightning address, hitting its LNURL
+// callback) must use the default agent, which verifies certs normally —
+// otherwise a MITM between us and the recipient's wallet provider could
+// swap the invoice we end up paying. See GS-006.
 const agent = new https.Agent({ rejectUnauthorized: false });
 
 const headers = {
@@ -32,11 +39,14 @@ export async function checkPayment(paymentHash) {
 export async function payLightningAddress(lightningAddress, amountSats) {
   const [user, domain] = lightningAddress.split('@');
   if (!user || !domain) throw new Error('Invalid Lightning address');
-  const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`, { agent });
+  // No `agent` here on purpose — these two calls go to a server we don't
+  // control (the recipient's wallet provider), so they must use normal,
+  // verified HTTPS, not the LND-only insecure agent above.
+  const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`);
   if (!lnurlRes.ok) throw new Error('Could not resolve Lightning address');
   const lnurlData = await lnurlRes.json();
   const amountMsats = amountSats * 1000;
-  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`, { agent });
+  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`);
   if (!invoiceRes.ok) throw new Error('Could not get invoice');
   const { pr } = await invoiceRes.json();
 

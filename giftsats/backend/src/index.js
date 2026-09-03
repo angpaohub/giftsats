@@ -567,6 +567,13 @@ app.post('/api/redeem', async (req, res) => {
     const { lightningAddress, giftCardId } = req.body;
     if (!lightningAddress) return res.status(400).json({ error: 'Lightning address required' });
     if (!giftCardId) return res.status(400).json({ error: 'Gift card ID required' });
+    // Same format check already used for designer/sender addresses elsewhere
+    // (GS-006) — the redeem endpoint was the one place this was missing,
+    // and its address goes straight into an outbound payment lookup.
+    const lnAddrRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    if (!lnAddrRegex.test(lightningAddress)) {
+      return res.status(400).json({ error: 'Invalid Lightning address format' });
+    }
 
     const card = await getGiftCard(giftCardId);
     if (!card) return res.status(404).json({ error: 'Gift card not found' });
