@@ -6,7 +6,7 @@ import QR from '../components/QR.jsx';
 import CopyButton from '../components/CopyButton.jsx';
 import { T, Notice, microLabel, headline } from '../components/ui.jsx';
 import { resolveArt } from '../lib/designs.js';
-import { api } from '../lib/api.js';
+import { api, redeemSecretFromHash } from '../lib/api.js';
 import { clock, fmt } from '../lib/format.js';
 
 const SERVICE_FEE_PERCENT = 2;
@@ -24,6 +24,10 @@ export default function PayInvoice() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [pending] = useState(() => loadPending(id));
+  // GS-004: normally arrives in the URL fragment straight from Create.jsx;
+  // giftsats_pending is the fallback if that's ever missing (e.g. this page
+  // got reloaded from a saved/duplicated URL that dropped the fragment).
+  const [redeemSecret] = useState(() => redeemSecretFromHash() || pending?.redeemSecret || null);
   const [status, setStatus] = useState('awaiting'); // awaiting | paid | expired
   const [left, setLeft] = useState(() => {
     if (!pending?.invoiceExpiresAt) return 600;
@@ -58,7 +62,8 @@ export default function PayInvoice() {
           setStatus('paid');
           localStorage.removeItem('giftsats_pending');
           localStorage.removeItem('giftsats_form');
-          setTimeout(() => navigate(`/ready/${id}`, { replace: true }), 700);
+          const hash = redeemSecret ? `#s=${redeemSecret}` : '';
+          setTimeout(() => navigate(`/ready/${id}${hash}`, { replace: true }), 700);
         }
       } catch {
         /* transient — the next tick tries again */

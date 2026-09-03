@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import path from 'path';
-import { randomUUID, createHash, timingSafeEqual } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual, randomBytes } from 'crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice } from './lnd.js';
 import {
@@ -107,7 +107,9 @@ function publicCard(card) {
     recipientName: card.recipientName,
     senderName:    card.senderName,
     status:        publicStatus(card),
-    cashuToken:    card.cashuToken,
+    // GS-004: no redeem credential of any kind is ever handed back over a GET.
+    // The real secret is generated once at creation and returned only in the
+    // /api/gift/create response — see redeemSecret below and validRedeemSecret.
     expiresAt:     card.expiresAt,
     refundStatus:  publicRefundStatus(card),
     createdAt:     card.createdAt,
@@ -151,6 +153,28 @@ function requireAdminKey(req, res, next) {
   if (!process.env.ADMIN_KEY) return res.status(500).json({ error: 'ADMIN_KEY not set on server' });
   if (!validAdminKey(req.get('X-Admin-Key') || '')) return res.status(403).json({ error: 'Forbidden' });
   next();
+}
+
+// ── Redeem secret (GS-004) ───────────────────────────────
+// A gift card's real credential is a 256-bit random secret generated once in
+// POST /api/gift/create and returned in that response only — never stored in
+// plaintext (only its SHA-256 hash goes in the DB) and never handed back by
+// any GET. The frontend carries the raw secret in the share link's URL
+// fragment (`#s=...`), which browsers never transmit to any server — see
+// cardUrl() in the frontend's format.js. Compared the same way as
+// validAdminKey: as digests via timingSafeEqual, so neither a wrong guess's
+// length nor its bytes leak through response timing.
+function validRedeemSecret(storedHashHex, provided) {
+  if (!storedHashHex || !provided) return false;
+  const a = createHash('sha256').update(String(provided)).digest();
+  let b;
+  try {
+    b = Buffer.from(storedHashHex, 'hex');
+  } catch {
+    return false;
+  }
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 // ── Health ──────────────────────────────────────────────
@@ -425,6 +449,13 @@ app.post('/api/gift/create', async (req, res) => {
       });
     }
 
+    // GS-004: the actual redeem credential, generated once, right now. Only
+    // its hash is ever persisted — the raw value is returned exactly once,
+    // below, and the frontend is responsible for carrying it forward (in the
+    // URL fragment of the share link/QR) from here on.
+    const redeemSecret = randomBytes(32).toString('hex');
+    const redeemSecretHash = createHash('sha256').update(redeemSecret).digest('hex');
+
     const invoice = await createInvoice(totalSats, `GiftSats: ${amountSats} sats`);
     const giftCard = await createGiftCard({
       amountSats,
@@ -437,11 +468,13 @@ app.post('/api/gift/create', async (req, res) => {
       senderLightningAddress: senderLightningAddress || null,
       paymentHash: invoice.r_hash,
       paymentRequest: invoice.payment_request,
+      redeemSecretHash,
     });
 
     res.json({
       giftCardId: giftCard.id,
       redeemCode: redeemCodeFor(giftCard.id),
+      redeemSecret,
       paymentRequest: invoice.payment_request,
       totalSats,
       amountSats,
@@ -471,11 +504,6 @@ async function refreshCard(giftCard) {
 
     const paid = await checkPayment(giftCard.paymentHash);
     if (paid) {
-      const cashuToken = `cashuA_${Buffer.from(JSON.stringify({
-        giftCardId: giftCard.id,
-        amount: giftCard.amountSats,
-      })).toString('base64')}`;
-
       // ── Atomically claim the mint (GS-005) ───────────
       // /api/gift/:id and /api/gift/code/:code are both public and unrate-
       // limited, and the frontend polls them every few seconds — so several
@@ -484,7 +512,9 @@ async function refreshCard(giftCard) {
       // (WHERE status='pending') is "the one" that minted this card, and
       // only that request fires the designer/platform fee payouts below.
       // Everyone else just gets back the card someone else already minted.
-      const claimed = await claimForMint(giftCard.id, cashuToken);
+      // (The redeem secret was already generated in /api/gift/create — GS-004
+      // — so minting itself no longer needs to produce any credential.)
+      const claimed = await claimForMint(giftCard.id);
       if (!claimed) {
         return getGiftCard(giftCard.id);
       }
@@ -556,8 +586,7 @@ app.get('/api/gift/code/:code', async (req, res) => {
 // ── Redeem gift card ─────────────────────────────────────
 app.post('/api/redeem', async (req, res) => {
   try {
-    const { cashuToken, lightningAddress, giftCardId } = req.body;
-    if (!cashuToken) return res.status(400).json({ error: 'No token provided' });
+    const { redeemSecret, lightningAddress, giftCardId } = req.body;
     if (!lightningAddress) return res.status(400).json({ error: 'Lightning address required' });
     if (!giftCardId) return res.status(400).json({ error: 'Gift card ID required' });
 
@@ -572,15 +601,11 @@ app.post('/api/redeem', async (req, res) => {
       return res.status(410).json({ error: 'Gift card has expired', expiredAt: card.expiresAt });
     }
 
-    let tokenData = null;
-    try {
-      tokenData = JSON.parse(Buffer.from(cashuToken.replace('cashuA_', ''), 'base64').toString());
-    } catch {
-      return res.status(400).json({ error: 'Invalid token format' });
-    }
-
-    if (tokenData.giftCardId !== giftCardId) {
-      return res.status(400).json({ error: 'Token does not match gift card' });
+    // ── Redeem key check (GS-004) ────────────────────
+    // No pre-fix cards are outstanding, so this is a hard requirement for
+    // every card, with no legacy fallback.
+    if (!validRedeemSecret(card.redeemSecretHash, redeemSecret)) {
+      return res.status(403).json({ error: 'Wrong or missing redeem key' });
     }
 
     // ── Atomically claim the card before paying out (GS-003) ─
@@ -717,7 +742,14 @@ app.get('/card/:id', async (req, res) => {
   <meta http-equiv="refresh" content="0; url=${viewUrl}" />
 </head>
 <body>
-  <script>window.location.replace("${viewUrl}");</script>
+  <script>
+    // GS-004: the redeem secret travels only in the URL fragment (never sent
+    // to this server — that's the whole point), so it never reached this
+    // handler. But this script runs in the visitor's own browser, which still
+    // has the original "/card/:id#s=..." address, so window.location.hash is
+    // carried forward by hand onto the redirect target.
+    window.location.replace("${viewUrl}" + window.location.hash);
+  </script>
 </body>
 </html>`);
   } catch (e) {

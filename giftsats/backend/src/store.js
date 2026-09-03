@@ -31,6 +31,7 @@ export async function initDB() {
       redeemed_at              TIMESTAMPTZ,
       expires_at               TIMESTAMPTZ,
       refund_status            TEXT NOT NULL DEFAULT 'none',
+      redeem_secret_hash       TEXT,
       created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -42,6 +43,12 @@ export async function initDB() {
   await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS design_fee INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS recipient_name TEXT NOT NULL DEFAULT ''`);
   await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS sender_name TEXT NOT NULL DEFAULT ''`);
+  // GS-004: the real redeem credential. Generated once at card creation and
+  // handed to the creator in the /api/gift/create response only — never
+  // stored in plaintext, never returned by any GET. /api/redeem in index.js
+  // requires a match against this hash for every card, no exceptions — there
+  // were no outstanding pre-fix cards at deploy time, so no legacy fallback.
+  await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS redeem_secret_hash TEXT`);
 
   // ── Marketplace designs table ────────────────────────
   await pool.query(`
@@ -133,14 +140,14 @@ export async function restoreDesign(id) {
 }
 
 // ── Gift card CRUD ───────────────────────────────────────
-export async function createGiftCard({ amountSats, designId, platformFee, designFee, senderNote, recipientName, senderName, senderLightningAddress, paymentHash, paymentRequest }) {
+export async function createGiftCard({ amountSats, designId, platformFee, designFee, senderNote, recipientName, senderName, senderLightningAddress, paymentHash, paymentRequest, redeemSecretHash }) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   await pool.query(
     `INSERT INTO gift_cards
-      (id, amount_sats, design_id, platform_fee, design_fee, sender_note, recipient_name, sender_name, sender_lightning_address, payment_hash, payment_request, status, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)`,
-    [id, amountSats, designId, platformFee ?? 0, designFee ?? 0, senderNote ?? '', recipientName ?? '', senderName ?? '', senderLightningAddress ?? null, paymentHash, paymentRequest, expiresAt]
+      (id, amount_sats, design_id, platform_fee, design_fee, sender_note, recipient_name, sender_name, sender_lightning_address, payment_hash, payment_request, status, expires_at, redeem_secret_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13)`,
+    [id, amountSats, designId, platformFee ?? 0, designFee ?? 0, senderNote ?? '', recipientName ?? '', senderName ?? '', senderLightningAddress ?? null, paymentHash, paymentRequest, expiresAt, redeemSecretHash ?? null]
   );
   return getGiftCard(id);
 }
@@ -251,11 +258,13 @@ export async function releaseRedeemClaim(id) {
 }
 
 // ── Mint (GS-005) ────────────────────────────────────────
-export async function claimForMint(id, cashuToken) {
+// No token/secret is generated here anymore (GS-004) — the redeem secret is
+// created once up front in createGiftCard, so minting is just the status flip.
+export async function claimForMint(id) {
   const { rows } = await pool.query(
-    `UPDATE gift_cards SET status = 'minted', cashu_token = $2
+    `UPDATE gift_cards SET status = 'minted'
      WHERE id = $1 AND status = 'pending' RETURNING *`,
-    [id, cashuToken]
+    [id]
   );
   return rows[0] ? dbRowToCard(rows[0]) : null;
 }
@@ -370,6 +379,7 @@ function dbRowToCard(row) {
     status:                 row.status,
     cashuToken:             row.cashu_token,
     cashuQuote:             row.cashu_quote,
+    redeemSecretHash:       row.redeem_secret_hash,
     redeemedTo:             row.redeemed_to,
     redeemedAt:             row.redeemed_at,
     expiresAt:              row.expires_at,

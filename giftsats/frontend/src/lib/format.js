@@ -33,7 +33,12 @@ export function shortCode(id) {
 export const isLightningAddress = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 export const isEmail = isLightningAddress;
 
-export const cardUrl = (id) => `${window.location.origin}/card/${id}`;
+// GS-004: `secret` is the card's real redeem credential. It rides in the URL
+// fragment (`#s=...`), which browsers never send to any server in any HTTP
+// request — see api.js's redeemSecretFromHash()/extractRedeemSecret() for the
+// reverse direction. Omit it to build a lookup-only link (e.g. an OG preview
+// URL) that can't move funds.
+export const cardUrl = (id, secret) => `${window.location.origin}/card/${id}${secret ? `#s=${secret}` : ''}`;
 
 export async function copy(text) {
   try {

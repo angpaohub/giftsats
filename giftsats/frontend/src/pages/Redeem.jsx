@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
 import { T, Input, PrimaryButton, Notice, microLabel, headline } from '../components/ui.jsx';
-import { api, resolveCard } from '../lib/api.js';
+import { api, resolveCard, extractRedeemSecret } from '../lib/api.js';
 import { resolveArt } from '../lib/designs.js';
 import { cardUrl, fmt, isLightningAddress } from '../lib/format.js';
 
@@ -27,6 +27,12 @@ export default function Redeem() {
   const [method, setMethod] = useState('scan');
   const [code, setCode] = useState('');
   const [card, setCard] = useState(null);
+  // GS-004: only present when `card` was loaded from something that carried
+  // a URL fragment — the scan/upload methods decode the actual QR, which
+  // encodes the full share link including its `#s=...` secret. The "paste
+  // code" method only ever has the short printed code, which can't carry
+  // one — see GS-011.
+  const [redeemSecret, setRedeemSecret] = useState(null);
   const [design, setDesign] = useState(null);
   const [address, setAddress] = useState('');
   const [status, setStatus] = useState(null); // {tone, msg}
@@ -62,6 +68,7 @@ export default function Redeem() {
         return;
       }
       setCard(data);
+      setRedeemSecret(extractRedeemSecret(raw));
       setStatus(null);
       if (data.designId && !String(data.designId).startsWith('giftsats-')) {
         api.design(data.designId).then(setDesign).catch(() => {});
@@ -125,12 +132,12 @@ export default function Redeem() {
   }
 
   async function redeem() {
-    if (!card || !isLightningAddress(address)) return;
+    if (!card || !redeemSecret || !isLightningAddress(address)) return;
     setBusy(true);
     setStatus(null);
     try {
       const res = await api.redeem({
-        cashuToken: card.cashuToken,
+        redeemSecret,
         lightningAddress: address.trim(),
         giftCardId: card.id,
       });
@@ -153,6 +160,7 @@ export default function Redeem() {
 
   function reset() {
     setCard(null);
+    setRedeemSecret(null);
     setDesign(null);
     setAddress('');
     setCode('');
@@ -161,7 +169,7 @@ export default function Redeem() {
   }
 
   const art = card ? resolveArt(card.designId, design) : null;
-  const ready = !!card && isLightningAddress(address) && !busy;
+  const ready = !!card && !!redeemSecret && isLightningAddress(address) && !busy;
 
   return (
     <Page maxWidth={980} title="Redeem">
@@ -351,6 +359,21 @@ export default function Redeem() {
                     Redeem another →
                   </button>
                 </>
+              ) : !redeemSecret ? (
+                <>
+                  <Notice tone="bad">
+                    A typed code can only look up this card — it can't carry the key needed to redeem it. Scan the
+                    QR on the card, or upload a photo of it, instead.
+                  </Notice>
+                  <button
+                    type="button"
+                    onClick={reset}
+                    className="gs-link"
+                    style={{ fontSize: 13.5, color: T.mutedWarm, marginTop: 16 }}
+                  >
+                    ← Use a different card
+                  </button>
+                </>
               ) : (
                 <>
                   <div style={{ ...microLabel, fontSize: 10.5, letterSpacing: '0.2em', marginBottom: 10 }}>
@@ -422,7 +445,7 @@ export default function Redeem() {
               art={art}
               code={card.id}
               expiresAt={card.expiresAt}
-              qrValue={cardUrl(card.id)}
+              qrValue={cardUrl(card.id, redeemSecret)}
             />
           )}
         </div>

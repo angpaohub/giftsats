@@ -4,6 +4,7 @@ import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
 import { T, GhostButton, Textarea, Notice, microLabel, headline } from '../components/ui.jsx';
 import { useCard } from '../lib/useCard.js';
+import { redeemSecretFromHash } from '../lib/api.js';
 import { cardUrl, fmt, copy } from '../lib/format.js';
 
 const SHARE_TARGETS = [
@@ -16,6 +17,10 @@ const SHARE_TARGETS = [
 export default function CardReady() {
   const { id } = useParams();
   const { card, art, error, loading } = useCard(id, { poll: true });
+  // GS-004: this card's real redeem credential, carried here from Create.jsx
+  // via the URL fragment (see PayInvoice.jsx). Every share link/QR built on
+  // this page must embed it — without it, the recipient can't redeem.
+  const [redeemSecret] = useState(() => redeemSecretFromHash());
   const cardRef = useRef(null);
   const [busy, setBusy] = useState('');
   const [customCopyText, setCustomCopyText] = useState(null);
@@ -45,7 +50,7 @@ export default function CardReady() {
   }
 
   async function share() {
-    const url = cardUrl(card.id);
+    const url = cardUrl(card.id, redeemSecret);
     const text = `🎁 I'm sending you a Bitcoin gift card worth ${fmt(card.amountSats)} sats!\n\nRedeem it here: ${url}`;
     try {
       const canvas = await renderCanvas();
@@ -92,7 +97,7 @@ export default function CardReady() {
     );
   }
 
-  const link = cardUrl(card.id);
+  const link = cardUrl(card.id, redeemSecret);
   const defaultCopyText = `🎁 I'm sending you a Bitcoin gift card worth ${fmt(card.amountSats)} sats!\n\nRedeem it here: ${link}`;
   const copyText = customCopyText ?? defaultCopyText;
 
@@ -130,6 +135,15 @@ export default function CardReady() {
       <h1 style={{ ...headline, marginTop: 16, fontWeight: 400, animation: 'gsRise .6s ease both' }}>
         Your card is <em>live.</em>
       </h1>
+
+      {!redeemSecret && (
+        <div style={{ marginTop: 20 }}>
+          <Notice tone="bad">
+            Couldn't find this card's redeem key on this device. The link below won't let the recipient redeem —
+            reload this page from the original payment step, or <Link to="/create">create the gift again</Link>.
+          </Notice>
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'clamp(28px, 4vw, 56px)', marginTop: 40 }}>
         <div

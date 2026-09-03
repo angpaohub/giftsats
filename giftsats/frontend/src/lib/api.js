@@ -52,3 +52,25 @@ export async function resolveCard(raw) {
 
   return null;
 }
+
+// GS-004: the redeem secret lives only in a URL fragment (`#s=...`), which is
+// never sent to any server — see cardUrl() in format.js. These pull it back
+// out on the reading side.
+//
+// redeemSecretFromHash reads the *current page's* fragment (window.location.hash
+// by default) — used by pages the secret's link actually lands on (GiftLink,
+// Pay/Ready during the create flow).
+export function redeemSecretFromHash(hash = typeof window !== 'undefined' ? window.location.hash : '') {
+  const raw = String(hash || '').replace(/^#/, '');
+  return new URLSearchParams(raw).get('s');
+}
+
+// extractRedeemSecret pulls it out of an arbitrary scanned/pasted string
+// instead (a full URL from a QR scan or photo upload). A manually-typed short
+// code never carries one — see GS-011.
+export function extractRedeemSecret(raw) {
+  const text = String(raw || '');
+  const hashIdx = text.indexOf('#');
+  if (hashIdx === -1) return null;
+  return redeemSecretFromHash(text.slice(hashIdx));
+}
