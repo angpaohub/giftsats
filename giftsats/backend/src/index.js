@@ -24,9 +24,26 @@ const allowedOrigins = (process.env.FRONTEND_URL || '')
   .map(s => s.trim())
   .filter(Boolean);
 
+// GS-009: if FRONTEND_URL is missing/misspelled, fail CLOSED, not open. The
+// old logic treated an empty allowedOrigins as "allow every origin" — a
+// silent, invisible hole (any website's JS could call our API from a
+// visitor's browser). Now an empty allowedOrigins means no browser origin is
+// trusted at all; only requests with no Origin header (curl, server-to-server,
+// same-origin) still go through. This can't fully open a hole by omission —
+// the failure mode is "the real frontend stops working and someone notices
+// immediately," not "a stranger's website can quietly read admin data."
+if (allowedOrigins.length === 0) {
+  console.warn('⚠️  FRONTEND_URL is not set — CORS will reject ALL cross-origin browser requests until it is configured. Set FRONTEND_URL to the frontend origin(s) (comma-separated) to restore access.');
+}
+
 app.use('/api', cors({
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    if (!origin) {
+      // No Origin header at all: not a cross-origin browser request (curl,
+      // server-to-server, same-origin fetches) — always fine, independent of
+      // whether FRONTEND_URL is configured.
+      cb(null, true);
+    } else if (allowedOrigins.length > 0 && allowedOrigins.includes(origin)) {
       cb(null, true);
     } else {
       cb(new Error('Not allowed by CORS'));
