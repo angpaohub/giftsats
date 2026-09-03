@@ -499,19 +499,6 @@ app.post('/api/redeem', async (req, res) => {
   }
 });
 
-// ── Send sats via Lightning address ─────────────────────
-app.post('/api/wallet/send', async (req, res) => {
-  try {
-    const { lightningAddress, amountSats } = req.body;
-    if (!lightningAddress || !amountSats) return res.status(400).json({ error: 'Missing params' });
-    await payLightningAddress(lightningAddress, amountSats);
-    res.json({ success: true });
-  } catch (e) {
-    console.error('send error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ── Expiry cron job (runs every hour) ───────────────────
 async function processExpiredCards() {
   const expired = await listExpiredUnredeemed();
