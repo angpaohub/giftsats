@@ -140,10 +140,10 @@ function redeemCodeFor(id) {
 
 // ── Admin auth ────────────────────────────────────────────
 // Gate for every route that returns raw card/design rows, node/wallet data,
-// or lets someone change platform state or move funds. Reuses the same
-// ADMIN_KEY already used by /admin/node — no new secret to manage. Compared
-// as a SHA-256 digest via timingSafeEqual so neither the key's length nor
-// its bytes can be inferred from response timing.
+// or lets someone change platform state or move funds. One ADMIN_KEY shared
+// across all of it — no per-route secret to manage. Compared as a SHA-256
+// digest via timingSafeEqual so neither the key's length nor its bytes can
+// be inferred from response timing.
 function validAdminKey(provided) {
   const ADMIN_KEY = process.env.ADMIN_KEY;
   if (!ADMIN_KEY || !provided) return false;
@@ -187,9 +187,10 @@ app.get('/api/admin/ping', requireAdminKey, (req, res) => {
 });
 
 // ── Admin: node info + balance + channels (JSON) ────────
-// Backs the "Node" tab in the React admin dashboard. Read-only — same LND
-// calls /admin/node already makes, just returned as JSON instead of baked
-// into an HTML string.
+// Backs the "Node" tab in the React admin dashboard. Read-only LND calls,
+// returned as JSON (the old server-rendered /admin/node HTML page that used
+// to bake this into a page — auth'd by a key in the URL, GS-008 — is gone;
+// this JSON API plus the React Node tab is the only dashboard now).
 app.get('/api/admin/node-info', requireAdminKey, async (req, res) => {
   try {
     const [info, balance, channels] = await Promise.all([
@@ -773,11 +774,18 @@ app.get('/og/card/:id.png', async (req, res) => {
   }
 });
 
-// ── Admin: create invoice (receive) — protected by ADMIN_KEY only ──
-// Accepts the key either as ?key= (the /admin/node HTML page) or as an
-// X-Admin-Key header (the React admin's Node tab) — same key, same check.
-app.post('/admin/action/create-invoice', async (req, res) => {
-  if (!validAdminKey(req.get('X-Admin-Key') || req.query.key || '')) return res.status(403).json({ error: 'Forbidden' });
+// ── Admin: create invoice (receive) — protected by ADMIN_KEY ──
+// Header only (X-Admin-Key), like every other /api/admin/* route. This used
+// to also accept ?key= for the old server-rendered /admin/node page, which
+// put the key in the URL (GS-008); that page is gone, so the query-string
+// fallback goes with it. The React admin's Node tab already sends the key
+// as a header via adminFetch(), so it is unaffected.
+// Lives under /api/admin (not the old /admin/action prefix) so it's covered
+// by the same `app.use('/api', cors(...))` middleware as every other admin
+// route — the old prefix fell outside CORS entirely and broke this button
+// whenever the frontend and backend are on different origins, which is the
+// real GiftSats topology (Cloudflare Pages + Railway). See GS-009 follow-up.
+app.post('/api/admin/create-invoice', requireAdminKey, async (req, res) => {
   try {
     const amountSats = parseInt(req.body.amountSats);
     if (!amountSats || amountSats < 1) return res.status(400).json({ error: 'Invalid amount' });
@@ -789,10 +797,11 @@ app.post('/admin/action/create-invoice', async (req, res) => {
 });
 
 // ── Admin: pay bolt11 or Lightning address — needs BOTH keys ──
-// ADMIN_KEY (query or header) proves you can view the dashboard.
+// ADMIN_KEY (X-Admin-Key header) proves you can view the dashboard.
 // ADMIN_PAY_KEY (form field, separate secret) proves you're allowed to move funds out.
-app.post('/admin/action/pay', async (req, res) => {
-  if (!validAdminKey(req.get('X-Admin-Key') || req.query.key || '')) return res.status(403).json({ error: 'Forbidden' });
+// Same /api/admin move as create-invoice above, and for the same reason —
+// this used to be /admin/action/pay, outside the CORS-covered /api prefix.
+app.post('/api/admin/pay', requireAdminKey, async (req, res) => {
   const ADMIN_PAY_KEY = process.env.ADMIN_PAY_KEY;
   if (!ADMIN_PAY_KEY) return res.status(500).json({ error: 'ADMIN_PAY_KEY not set on server' });
   if (req.body.payKey !== ADMIN_PAY_KEY) return res.status(403).json({ error: 'Wrong or missing Pay Authorization Key' });
@@ -814,225 +823,6 @@ app.post('/admin/action/pay', async (req, res) => {
     res.json({ success: true, preimage: result.payment_preimage });
   } catch (e) {
     res.status(500).json({ error: e.message });
-  }
-});
-
-// ── Admin: node status dashboard ─────────────────────────
-app.get('/admin/node', async (req, res) => {
-  const ADMIN_KEY = process.env.ADMIN_KEY;
-  if (!ADMIN_KEY) return res.status(500).send('ADMIN_KEY not set on server');
-  if (req.query.key !== ADMIN_KEY) return res.status(403).send('Forbidden — missing or wrong ?key=');
-
-  try {
-    const [info, balance, channels, invoices, payments] = await Promise.all([
-      getNodeInfo(),
-      getChannelBalance(),
-      listChannels(),
-      listInvoices(50),
-      listPayments(50),
-    ]);
-
-    const channelRows = channels.map(ch => {
-      const cap = parseInt(ch.capacity);
-      const local = parseInt(ch.local_balance);
-      const remote = parseInt(ch.remote_balance);
-      const reserve = parseInt(ch.local_chan_reserve_sat || 0);
-      const spendable = Math.max(0, local - reserve);
-      return `
-        <tr>
-          <td>${ch.peer_alias || '(unknown)'}</td>
-          <td class="mono">${ch.active ? '🟢 active' : '🔴 inactive'}</td>
-          <td class="mono">${cap.toLocaleString()}</td>
-          <td class="mono">${local.toLocaleString()}</td>
-          <td class="mono">${remote.toLocaleString()}</td>
-          <td class="mono">${reserve.toLocaleString()}</td>
-          <td class="mono" style="color:${spendable > 0 ? '#39ff14' : '#ff6b6b'}">${spendable.toLocaleString()}</td>
-          <td class="mono">${ch.private ? 'private' : 'public'}</td>
-        </tr>`;
-    }).join('');
-
-    const received = invoices
-      .filter(inv => inv.settled)
-      .map(inv => ({
-        time: parseInt(inv.settle_date) * 1000,
-        direction: 'in',
-        amount: parseInt(inv.amt_paid_sat || inv.value || 0),
-        memo: inv.memo || '(no memo)',
-        status: 'settled',
-      }));
-
-    const sent = payments
-      .map(p => ({
-        time: parseInt(p.creation_date) * 1000,
-        direction: 'out',
-        amount: parseInt(p.value_sat || p.value || 0),
-        memo: p.payment_request ? p.payment_request.slice(0, 20) + '...' : '(no memo)',
-        status: p.status === 'SUCCEEDED' ? 'succeeded' : (p.status === 'FAILED' ? 'failed' : p.status?.toLowerCase() || 'unknown'),
-        fee: parseInt(p.fee_sat || 0),
-      }));
-
-    const txs = [...received, ...sent].sort((a, b) => b.time - a.time).slice(0, 50);
-
-    const txRows = txs.map(tx => {
-      const dateStr = new Date(tx.time).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'medium' });
-      const dirLabel = tx.direction === 'in' ? '⬇️ Received' : '⬆️ Sent';
-      const dirColor = tx.direction === 'in' ? '#39ff14' : '#F7931A';
-      const statusColor = tx.status === 'failed' ? '#ff6b6b' : (tx.status === 'succeeded' || tx.status === 'settled' ? '#39ff14' : '#888');
-      return `
-        <tr>
-          <td class="mono">${dateStr}</td>
-          <td class="mono" style="color:${dirColor}">${dirLabel}</td>
-          <td class="mono">${tx.amount.toLocaleString()} sats</td>
-          <td class="mono" style="color:${statusColor}">${tx.status}</td>
-          <td class="mono" style="color:#666">${tx.fee ? tx.fee.toLocaleString() + ' sats' : '—'}</td>
-          <td style="color:#888; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${tx.memo}</td>
-        </tr>`;
-    }).join('');
-
-    res.setHeader('Content-Type', 'text/html');
-    res.send(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>GiftSats — Node Status</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { background:#0a0a0a; color:#f0ece4; font-family:'JetBrains Mono','Fira Code',monospace; padding:32px; margin:0; }
-    h1 { color:#F7931A; font-size:20px; margin-bottom:4px; }
-    h2 { font-size:14px; margin:40px 0 16px; text-transform:uppercase; letter-spacing:1px; color:#888; }
-    .sub { color:#666; font-size:12px; margin-bottom:32px; }
-    .cards { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:32px; }
-    .card { background:#141414; border:1px solid #262626; border-radius:8px; padding:16px 20px; min-width:160px; }
-    .card .label { font-size:10px; color:#666; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
-    .card .value { font-size:20px; font-weight:700; }
-    table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:16px; }
-    th { text-align:left; color:#666; font-size:10px; text-transform:uppercase; letter-spacing:1px; padding:8px 10px; border-bottom:1px solid #262626; }
-    td { padding:10px; border-bottom:1px solid #1a1a1a; }
-    .mono { font-family:'JetBrains Mono',monospace; }
-    .refresh { color:#F7931A; text-decoration:none; font-size:11px; }
-    .synced-yes { color:#39ff14; }
-    .synced-no { color:#ff6b6b; }
-    input { width:100%; padding:8px; margin-bottom:8px; background:#0a0a0a; border:1px solid #262626; color:#f0ece4; font-family:inherit; border-radius:4px; box-sizing:border-box; }
-    button { width:100%; padding:8px; background:#F7931A; color:#000; border:none; border-radius:4px; cursor:pointer; font-family:inherit; font-weight:700; }
-    button:hover { opacity:0.9; }
-    .pay-key-note { font-size:10px; color:#666; margin-bottom:8px; }
-  </style>
-</head>
-<body>
-  <h1>⚡ GiftSats Node Status</h1>
-  <div class="sub">
-    ${info.alias || '(no alias)'} · ${info.identity_pubkey?.slice(0, 16)}...
-    · block ${info.block_height?.toLocaleString()}
-    · synced: <span class="${info.synced_to_chain ? 'synced-yes' : 'synced-no'}">${info.synced_to_chain ? 'yes' : 'no'}</span>
-    &nbsp;·&nbsp; <a class="refresh" href="?key=${req.query.key}">↻ refresh</a>
-  </div>
-
-  <div class="cards">
-    <div class="card"><div class="label">Total Local Balance</div><div class="value">${balance.localSats.toLocaleString()} sats</div></div>
-    <div class="card"><div class="label">Total Remote Balance</div><div class="value">${balance.remoteSats.toLocaleString()} sats</div></div>
-    <div class="card"><div class="label">Active Channels</div><div class="value">${channels.filter(c => c.active).length} / ${channels.length}</div></div>
-    <div class="card"><div class="label">Peers</div><div class="value">${info.num_peers ?? '—'}</div></div>
-  </div>
-
-  <h2>Receive / Send</h2>
-  <div class="cards" style="align-items:flex-start;">
-    <div class="card" style="min-width:280px;">
-      <div class="label" style="margin-bottom:12px;">Receive (Create Invoice)</div>
-      <input id="recvAmt" type="number" placeholder="Amount (sats)">
-      <button onclick="createInv()">Create Invoice</button>
-      <div id="recvResult" style="margin-top:12px; word-break:break-all; font-size:10px; color:#888;"></div>
-      <img id="recvQR" style="display:none; margin-top:12px; width:180px; border-radius:4px;">
-    </div>
-    <div class="card" style="min-width:280px;">
-      <div class="label" style="margin-bottom:12px;">Send (bolt11 or Lightning address)</div>
-      <input id="sendDest" type="text" placeholder="lnbc... or name@domain.com">
-      <input id="sendAmt" type="number" placeholder="Amount in sats (only for Lightning address)">
-      <div class="pay-key-note">Requires separate Pay Authorization Key ⬇️</div>
-      <input id="payKey" type="password" placeholder="Pay Authorization Key">
-      <button onclick="sendPay()">Pay</button>
-      <div id="sendResult" style="margin-top:12px; word-break:break-all; font-size:11px;"></div>
-    </div>
-  </div>
-
-  <h2>Channels</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Peer</th><th>Status</th><th>Capacity</th><th>Local</th><th>Remote</th>
-        <th>Reserve</th><th>Spendable</th><th>Type</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${channelRows || '<tr><td colspan="8" style="color:#666">No channels yet</td></tr>'}
-    </tbody>
-  </table>
-
-  <h2>Recent Transactions (last 50)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Time</th><th>Direction</th><th>Amount</th><th>Status</th><th>Fee</th><th>Details</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${txRows || '<tr><td colspan="6" style="color:#666">No transactions yet</td></tr>'}
-    </tbody>
-  </table>
-
-  <script>
-    const ADMIN_KEY_Q = new URLSearchParams(location.search).get('key');
-
-    async function createInv() {
-      const amt = document.getElementById('recvAmt').value;
-      const out = document.getElementById('recvResult');
-      const qr = document.getElementById('recvQR');
-      out.style.color = '#888';
-      out.textContent = 'Creating...';
-      qr.style.display = 'none';
-      try {
-        const res = await fetch('/admin/action/create-invoice?key=' + encodeURIComponent(ADMIN_KEY_Q), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amountSats: amt, memo: 'Admin receive' }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to create invoice');
-        out.textContent = data.paymentRequest;
-        qr.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(data.paymentRequest);
-        qr.style.display = 'block';
-      } catch (e) {
-        out.style.color = '#ff6b6b';
-        out.textContent = '❌ ' + e.message;
-      }
-    }
-
-    async function sendPay() {
-      const dest = document.getElementById('sendDest').value;
-      const amt = document.getElementById('sendAmt').value;
-      const payKey = document.getElementById('payKey').value;
-      const out = document.getElementById('sendResult');
-      out.style.color = '#888';
-      out.textContent = 'Sending...';
-      try {
-        const res = await fetch('/admin/action/pay?key=' + encodeURIComponent(ADMIN_KEY_Q), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ destination: dest, amountSats: amt || undefined, payKey }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Payment failed');
-        out.style.color = '#39ff14';
-        out.textContent = '✅ Payment succeeded — preimage: ' + data.preimage;
-      } catch (e) {
-        out.style.color = '#ff6b6b';
-        out.textContent = '❌ ' + e.message;
-      }
-    }
-  </script>
-</body>
-</html>`);
-  } catch (e) {
-    res.status(500).send(`Error loading node status: ${e.message}`);
   }
 });
 

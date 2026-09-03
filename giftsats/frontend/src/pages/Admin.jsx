@@ -741,13 +741,15 @@ function DesignsTab({ BACKEND, mono, display, adminFetch }) {
   );
 }
 
-// ── Node tab — merges what used to be the standalone /admin/node page ───
+// ── Node tab — replaces what used to be the standalone /admin/node page ──
 // Loads lazily (only once this tab is opened), matching DesignsTab, so
 // switching to other tabs and hitting REFRESH doesn't add extra LND round
 // trips for data nobody's looking at.
 //
-// /admin/node itself is left running as-is — same route, same ?key= auth,
-// untouched — so there's a working fallback if this tab ever has a problem.
+// The old /admin/node page (server-rendered HTML, auth'd via a ?key= query
+// string) has been removed entirely (GS-008) — the key in the URL leaked
+// into browser history and server access logs, and this tab does everything
+// it did anyway. This is now the only node dashboard.
 function NodeTab({ adminFetch, mono, display }) {
   const [nodeInfo, setNodeInfo] = useState(null); // { info, balance, channels }
   const [nodeTxs, setNodeTxs] = useState([]);
@@ -784,7 +786,7 @@ function NodeTab({ adminFetch, mono, display }) {
     setRecvError('');
     setRecvInvoice('');
     try {
-      const res = await adminFetch('/admin/action/create-invoice', {
+      const res = await adminFetch('/api/admin/create-invoice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amountSats: amt, memo: 'Admin receive' }),
@@ -801,7 +803,7 @@ function NodeTab({ adminFetch, mono, display }) {
   // ── Send ─────────────────────────────────────────────
   // payKey lives only in this component's local state — never persisted
   // (not sessionStorage, not the parent's adminKey) — so a payment always
-  // requires typing the Pay Authorization Key fresh, same as /admin/node.
+  // requires typing the Pay Authorization Key fresh.
   const [sendDest, setSendDest] = useState('');
   const [sendAmt, setSendAmt] = useState('');
   const [payKey, setPayKey] = useState('');
@@ -816,7 +818,7 @@ function NodeTab({ adminFetch, mono, display }) {
     setSendBusy(true);
     setSendResult(null);
     try {
-      const res = await adminFetch('/admin/action/pay', {
+      const res = await adminFetch('/api/admin/pay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ destination: sendDest.trim(), amountSats: sendAmt || undefined, payKey }),
@@ -842,7 +844,7 @@ function NodeTab({ adminFetch, mono, display }) {
   if (!nodeInfo) {
     return (
       <div style={{ fontFamily: mono, fontSize: 12, color: '#ff4444', padding: '40px', textAlign: 'center', border: '1px dashed #331111', borderRadius: 12 }}>
-        Could not load node status. The LND node may be unreachable right now — try REFRESH, or use /admin/node directly.
+        Could not load node status. The LND node may be unreachable right now — try REFRESH.
       </div>
     );
   }
