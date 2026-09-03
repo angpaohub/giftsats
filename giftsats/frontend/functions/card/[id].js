@@ -30,3 +30,4 @@ export async function onRequestGet({ params }) {
     return Response.redirect(`https://giftsats.org/g/${id}`, 302);
   }
 }
+
