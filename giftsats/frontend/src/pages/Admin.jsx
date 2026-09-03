@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import QR from '../components/QR.jsx';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -376,6 +377,7 @@ function AdminDashboard({ adminKey, onAuthError }) {
           <NavTab label="Cards" active={tab === 'cards'} onClick={() => setTab('cards')} badge={cards.length} />
           <NavTab label="Expiry" active={tab === 'expiry'} onClick={() => setTab('expiry')} badge={expiredCount > 0 ? expiredCount : expiringCount > 0 ? `${expiringCount}⚠` : null} />
           <NavTab label="Marketplace" active={tab === 'marketplace'} onClick={() => setTab('marketplace')} />
+          <NavTab label="Node" active={tab === 'node'} onClick={() => setTab('node')} />
         </div>
 
         {/* OVERVIEW TAB */}
@@ -620,6 +622,11 @@ function AdminDashboard({ adminKey, onAuthError }) {
         {tab === 'marketplace' && (
           <DesignsTab BACKEND={BACKEND} mono={mono} display={display} adminFetch={adminFetch} />
         )}
+
+        {/* NODE TAB */}
+        {tab === 'node' && (
+          <NodeTab adminFetch={adminFetch} mono={mono} display={display} />
+        )}
       </div>
     </div>
   );
@@ -720,6 +727,241 @@ function DesignsTab({ BACKEND, mono, display, adminFetch }) {
           ))}
         </>
       )}
+    </div>
+  );
+}
+
+// ── Node tab — merges what used to be the standalone /admin/node page ───
+// Loads lazily (only once this tab is opened), matching DesignsTab, so
+// switching to other tabs and hitting REFRESH doesn't add extra LND round
+// trips for data nobody's looking at.
+//
+// /admin/node itself is left running as-is — same route, same ?key= auth,
+// untouched — so there's a working fallback if this tab ever has a problem.
+function NodeTab({ adminFetch, mono, display }) {
+  const [nodeInfo, setNodeInfo] = useState(null); // { info, balance, channels }
+  const [nodeTxs, setNodeTxs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [infoRes, txRes] = await Promise.all([
+        adminFetch('/api/admin/node-info'),
+        adminFetch('/api/admin/node-transactions'),
+      ]);
+      setNodeInfo(infoRes.ok ? await infoRes.json() : null);
+      const txData = txRes.ok ? await txRes.json() : [];
+      setNodeTxs(Array.isArray(txData) ? txData : []);
+    } catch {
+      setNodeInfo(null);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
+
+  // ── Receive ──────────────────────────────────────────
+  const [recvAmt, setRecvAmt] = useState('');
+  const [recvInvoice, setRecvInvoice] = useState('');
+  const [recvError, setRecvError] = useState('');
+  const [recvBusy, setRecvBusy] = useState(false);
+
+  async function createInvoice() {
+    const amt = parseInt(recvAmt);
+    if (!amt || amt < 1) { setRecvError('Enter an amount'); return; }
+    setRecvBusy(true);
+    setRecvError('');
+    setRecvInvoice('');
+    try {
+      const res = await adminFetch('/admin/action/create-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountSats: amt, memo: 'Admin receive' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create invoice');
+      setRecvInvoice(data.paymentRequest);
+    } catch (e) {
+      setRecvError(e.message);
+    }
+    setRecvBusy(false);
+  }
+
+  // ── Send ─────────────────────────────────────────────
+  // payKey lives only in this component's local state — never persisted
+  // (not sessionStorage, not the parent's adminKey) — so a payment always
+  // requires typing the Pay Authorization Key fresh, same as /admin/node.
+  const [sendDest, setSendDest] = useState('');
+  const [sendAmt, setSendAmt] = useState('');
+  const [payKey, setPayKey] = useState('');
+  const [sendResult, setSendResult] = useState(null); // { ok, msg }
+  const [sendBusy, setSendBusy] = useState(false);
+
+  async function sendPay() {
+    if (!sendDest.trim() || !payKey) {
+      setSendResult({ ok: false, msg: 'Destination and Pay Authorization Key are required' });
+      return;
+    }
+    setSendBusy(true);
+    setSendResult(null);
+    try {
+      const res = await adminFetch('/admin/action/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination: sendDest.trim(), amountSats: sendAmt || undefined, payKey }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Payment failed');
+      setSendResult({ ok: true, msg: `Sent — preimage: ${data.preimage}` });
+      // Clear the form (payKey included) after a successful send so the
+      // next payment can't be fired off by accident with a stale key.
+      setSendDest('');
+      setSendAmt('');
+      setPayKey('');
+    } catch (e) {
+      setSendResult({ ok: false, msg: e.message });
+    }
+    setSendBusy(false);
+  }
+
+  if (loading) {
+    return <div style={{ fontFamily: mono, fontSize: 12, color: '#333', padding: '40px', textAlign: 'center' }}>LOADING NODE STATUS...</div>;
+  }
+
+  if (!nodeInfo) {
+    return (
+      <div style={{ fontFamily: mono, fontSize: 12, color: '#ff4444', padding: '40px', textAlign: 'center', border: '1px dashed #331111', borderRadius: 12 }}>
+        Could not load node status. The LND node may be unreachable right now — try REFRESH, or use /admin/node directly.
+      </div>
+    );
+  }
+
+  const { info, balance, channels } = nodeInfo;
+  const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '8px 10px', marginBottom: 8, background: '#000', border: '1px solid #222', borderRadius: 6, color: '#fff', fontFamily: mono, fontSize: 12 };
+  const buttonStyle = (busy) => ({ width: '100%', padding: 8, background: '#F7931A', border: 'none', borderRadius: 6, color: '#000', fontFamily: mono, fontWeight: 700, fontSize: 11, letterSpacing: 1, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 });
+
+  return (
+    <div>
+      <div style={{ fontFamily: mono, fontSize: 11, color: '#666', marginBottom: 24 }}>
+        {info?.alias || '(no alias)'} · {info?.identity_pubkey?.slice(0, 16)}...
+        · block {info?.block_height?.toLocaleString()}
+        · synced: <span style={{ color: info?.synced_to_chain ? '#39ff14' : '#ff6b6b' }}>{info?.synced_to_chain ? 'yes' : 'no'}</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 32 }}>
+        <StatCard label="Local Balance" value={balance?.localSats || 0} sub="sats — max redeemable" accent="#F7931A" />
+        <StatCard label="Remote Balance" value={balance?.remoteSats || 0} sub="sats — max mintable" accent="#39ff14" />
+        <StatCard label="Active Channels" value={channels.filter(c => c.active).length} sub={`of ${channels.length}`} accent="#3b9eff" />
+        <StatCard label="Peers" value={info?.num_peers || 0} accent="#9b6dff" />
+      </div>
+
+      {/* Receive / Send */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 32 }}>
+        <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 20, minWidth: 280, flex: 1 }}>
+          <div style={{ fontFamily: mono, fontSize: 10, color: '#666', letterSpacing: 2, marginBottom: 14 }}>RECEIVE — CREATE INVOICE</div>
+          <input type="number" placeholder="Amount (sats)" value={recvAmt} onChange={(e) => setRecvAmt(e.target.value)} style={inputStyle} />
+          <button onClick={createInvoice} disabled={recvBusy} style={buttonStyle(recvBusy)}>
+            {recvBusy ? 'CREATING…' : 'CREATE INVOICE'}
+          </button>
+          {recvError && <div style={{ fontFamily: mono, fontSize: 11, color: '#ff4444', marginTop: 10 }}>{recvError}</div>}
+          {recvInvoice && (
+            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              {/* Drawn locally with the same QR component used on the redeem
+                  flow — nothing about the invoice is sent to a third party
+                  the way the old /admin/node page sent it to api.qrserver.com. */}
+              <QR value={recvInvoice} size={180} dark="#000" light="#fff" />
+              <div style={{ fontFamily: mono, fontSize: 10, color: '#666', wordBreak: 'break-all', textAlign: 'center' }}>{recvInvoice}</div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 20, minWidth: 280, flex: 1 }}>
+          <div style={{ fontFamily: mono, fontSize: 10, color: '#666', letterSpacing: 2, marginBottom: 14 }}>SEND — BOLT11 OR LIGHTNING ADDRESS</div>
+          <input type="text" placeholder="lnbc... or name@domain.com" value={sendDest} onChange={(e) => setSendDest(e.target.value)} style={inputStyle} />
+          <input type="number" placeholder="Amount in sats (Lightning address only)" value={sendAmt} onChange={(e) => setSendAmt(e.target.value)} style={inputStyle} />
+          <div style={{ fontFamily: mono, fontSize: 10, color: '#555', marginBottom: 6 }}>Requires a separate Pay Authorization Key — not remembered between payments.</div>
+          <input type="password" placeholder="Pay Authorization Key" value={payKey} onChange={(e) => setPayKey(e.target.value)} style={inputStyle} />
+          <button onClick={sendPay} disabled={sendBusy} style={buttonStyle(sendBusy)}>
+            {sendBusy ? 'SENDING…' : 'PAY'}
+          </button>
+          {sendResult && (
+            <div style={{ fontFamily: mono, fontSize: 11, marginTop: 10, wordBreak: 'break-all', color: sendResult.ok ? '#39ff14' : '#ff4444' }}>
+              {sendResult.ok ? '✓ ' : '✕ '}{sendResult.msg}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Channels */}
+      <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 24, marginBottom: 24, overflowX: 'auto' }}>
+        <div style={{ fontFamily: mono, fontSize: 10, color: '#333', letterSpacing: 3, marginBottom: 16 }}>CHANNELS</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: mono, fontSize: 11 }}>
+          <thead>
+            <tr>
+              {['Peer', 'Status', 'Capacity', 'Local', 'Remote', 'Reserve', 'Spendable', 'Type'].map((col) => (
+                <th key={col} style={{ textAlign: 'left', padding: '8px 12px', color: '#444', letterSpacing: 1, fontSize: 10, borderBottom: '1px solid #1a1a1a', whiteSpace: 'nowrap' }}>{col}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {channels.length === 0 ? (
+              <tr><td colSpan={8} style={{ padding: 20, color: '#333', textAlign: 'center' }}>No channels yet</td></tr>
+            ) : channels.map((ch, i) => {
+              const cap = parseInt(ch.capacity);
+              const local = parseInt(ch.local_balance);
+              const remote = parseInt(ch.remote_balance);
+              const reserve = parseInt(ch.local_chan_reserve_sat || 0);
+              const spendable = Math.max(0, local - reserve);
+              return (
+                <tr key={i} style={{ borderBottom: '1px solid #111' }}>
+                  <td style={{ padding: '8px 12px', color: '#888' }}>{ch.peer_alias || '(unknown)'}</td>
+                  <td style={{ padding: '8px 12px' }}>{ch.active ? '🟢 active' : '🔴 inactive'}</td>
+                  <td style={{ padding: '8px 12px', color: '#666' }}>{cap.toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px', color: '#666' }}>{local.toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px', color: '#666' }}>{remote.toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px', color: '#666' }}>{reserve.toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px', color: spendable > 0 ? '#39ff14' : '#ff6b6b' }}>{spendable.toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px', color: '#666' }}>{ch.private ? 'private' : 'public'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Transactions */}
+      <div style={{ background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: 12, padding: 24, overflowX: 'auto' }}>
+        <div style={{ fontFamily: mono, fontSize: 10, color: '#333', letterSpacing: 3, marginBottom: 16 }}>RECENT TRANSACTIONS (LAST 50)</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: mono, fontSize: 11 }}>
+          <thead>
+            <tr>
+              {['Time', 'Direction', 'Amount', 'Status', 'Fee', 'Details'].map((col) => (
+                <th key={col} style={{ textAlign: 'left', padding: '8px 12px', color: '#444', letterSpacing: 1, fontSize: 10, borderBottom: '1px solid #1a1a1a', whiteSpace: 'nowrap' }}>{col}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {nodeTxs.length === 0 ? (
+              <tr><td colSpan={6} style={{ padding: 20, color: '#333', textAlign: 'center' }}>No transactions yet</td></tr>
+            ) : nodeTxs.map((tx, i) => {
+              const dateStr = new Date(tx.time).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+              const dirColor = tx.direction === 'in' ? '#39ff14' : '#F7931A';
+              const statusColor = tx.status === 'failed' ? '#ff6b6b' : (tx.status === 'succeeded' || tx.status === 'settled' ? '#39ff14' : '#888');
+              return (
+                <tr key={i} style={{ borderBottom: '1px solid #111' }}>
+                  <td style={{ padding: '8px 12px', color: '#666' }}>{dateStr}</td>
+                  <td style={{ padding: '8px 12px', color: dirColor }}>{tx.direction === 'in' ? '⬇ Received' : '⬆ Sent'}</td>
+                  <td style={{ padding: '8px 12px', color: '#888' }}>{tx.amount.toLocaleString()} sats</td>
+                  <td style={{ padding: '8px 12px', color: statusColor }}>{tx.status}</td>
+                  <td style={{ padding: '8px 12px', color: '#555' }}>{tx.fee ? tx.fee.toLocaleString() + ' sats' : '—'}</td>
+                  <td style={{ padding: '8px 12px', color: '#666', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tx.memo}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -114,19 +114,24 @@ function redeemCodeFor(id) {
 }
 
 // ── Admin auth ────────────────────────────────────────────
-// Gate for every route that returns raw card/design rows or lets someone
-// change platform state. Reuses the same ADMIN_KEY already used by
-// /admin/node — no new secret to manage. The key must arrive as a header
-// (never a query string, which leaks into logs/history) and is compared as
-// a SHA-256 digest via timingSafeEqual so neither the key's length nor its
-// bytes can be inferred from response timing.
-function requireAdminKey(req, res, next) {
+// Gate for every route that returns raw card/design rows, node/wallet data,
+// or lets someone change platform state or move funds. Reuses the same
+// ADMIN_KEY already used by /admin/node — no new secret to manage. Compared
+// as a SHA-256 digest via timingSafeEqual so neither the key's length nor
+// its bytes can be inferred from response timing.
+function validAdminKey(provided) {
   const ADMIN_KEY = process.env.ADMIN_KEY;
-  if (!ADMIN_KEY) return res.status(500).json({ error: 'ADMIN_KEY not set on server' });
-  const provided = req.get('X-Admin-Key') || '';
+  if (!ADMIN_KEY || !provided) return false;
   const a = createHash('sha256').update(provided).digest();
   const b = createHash('sha256').update(ADMIN_KEY).digest();
-  if (!timingSafeEqual(a, b)) return res.status(403).json({ error: 'Forbidden' });
+  return timingSafeEqual(a, b);
+}
+
+// For JSON API routes: key must arrive as a header (never a query string,
+// which leaks into logs/history).
+function requireAdminKey(req, res, next) {
+  if (!process.env.ADMIN_KEY) return res.status(500).json({ error: 'ADMIN_KEY not set on server' });
+  if (!validAdminKey(req.get('X-Admin-Key') || '')) return res.status(403).json({ error: 'Forbidden' });
   next();
 }
 
@@ -154,6 +159,51 @@ app.get('/api/stats', async (req, res) => {
 // heavier endpoint instead.
 app.get('/api/admin/ping', requireAdminKey, (req, res) => {
   res.json({ ok: true });
+});
+
+// ── Admin: node info + balance + channels (JSON) ────────
+// Backs the "Node" tab in the React admin dashboard. Read-only — same LND
+// calls /admin/node already makes, just returned as JSON instead of baked
+// into an HTML string.
+app.get('/api/admin/node-info', requireAdminKey, async (req, res) => {
+  try {
+    const [info, balance, channels] = await Promise.all([
+      getNodeInfo(),
+      getChannelBalance(),
+      listChannels(),
+    ]);
+    res.json({ info, balance, channels });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: recent Lightning transactions (JSON) ─────────
+app.get('/api/admin/node-transactions', requireAdminKey, async (req, res) => {
+  try {
+    const [invoices, payments] = await Promise.all([listInvoices(50), listPayments(50)]);
+    const received = invoices
+      .filter(inv => inv.settled)
+      .map(inv => ({
+        time: parseInt(inv.settle_date) * 1000,
+        direction: 'in',
+        amount: parseInt(inv.amt_paid_sat || inv.value || 0),
+        memo: inv.memo || '(no memo)',
+        status: 'settled',
+      }));
+    const sent = payments.map(p => ({
+      time: parseInt(p.creation_date) * 1000,
+      direction: 'out',
+      amount: parseInt(p.value_sat || p.value || 0),
+      memo: p.payment_request ? p.payment_request.slice(0, 20) + '...' : '(no memo)',
+      status: p.status === 'SUCCEEDED' ? 'succeeded' : (p.status === 'FAILED' ? 'failed' : p.status?.toLowerCase() || 'unknown'),
+      fee: parseInt(p.fee_sat || 0),
+    }));
+    const txs = [...received, ...sent].sort((a, b) => b.time - a.time).slice(0, 50);
+    res.json(txs);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Admin: R2 storage stats ─────────────────────────────
@@ -662,9 +712,10 @@ app.get('/og/card/:id.png', async (req, res) => {
 });
 
 // ── Admin: create invoice (receive) — protected by ADMIN_KEY only ──
+// Accepts the key either as ?key= (the /admin/node HTML page) or as an
+// X-Admin-Key header (the React admin's Node tab) — same key, same check.
 app.post('/admin/action/create-invoice', async (req, res) => {
-  const ADMIN_KEY = process.env.ADMIN_KEY;
-  if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  if (!validAdminKey(req.get('X-Admin-Key') || req.query.key || '')) return res.status(403).json({ error: 'Forbidden' });
   try {
     const amountSats = parseInt(req.body.amountSats);
     if (!amountSats || amountSats < 1) return res.status(400).json({ error: 'Invalid amount' });
@@ -676,12 +727,11 @@ app.post('/admin/action/create-invoice', async (req, res) => {
 });
 
 // ── Admin: pay bolt11 or Lightning address — needs BOTH keys ──
-// ADMIN_KEY (URL) proves you can view the dashboard.
+// ADMIN_KEY (query or header) proves you can view the dashboard.
 // ADMIN_PAY_KEY (form field, separate secret) proves you're allowed to move funds out.
 app.post('/admin/action/pay', async (req, res) => {
-  const ADMIN_KEY = process.env.ADMIN_KEY;
+  if (!validAdminKey(req.get('X-Admin-Key') || req.query.key || '')) return res.status(403).json({ error: 'Forbidden' });
   const ADMIN_PAY_KEY = process.env.ADMIN_PAY_KEY;
-  if (!ADMIN_KEY || req.query.key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
   if (!ADMIN_PAY_KEY) return res.status(500).json({ error: 'ADMIN_PAY_KEY not set on server' });
   if (req.body.payKey !== ADMIN_PAY_KEY) return res.status(403).json({ error: 'Wrong or missing Pay Authorization Key' });
 
