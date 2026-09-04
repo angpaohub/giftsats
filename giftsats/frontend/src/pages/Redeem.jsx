@@ -184,7 +184,14 @@ export default function Redeem() {
     setStatus(null);
   }
 
-  const art = card ? resolveArt(card.designId, design) : null;
+  // Same customImageUrl fallback as useCard.js — this page loads its own
+  // card state separately rather than through that hook, so it needs the
+  // same check repeated here.
+  const art = card
+    ? card.customImageUrl
+      ? resolveArt(card.designId, { imageUrl: card.customImageUrl })
+      : resolveArt(card.designId, design)
+    : null;
   // A card looked up by its printed short code never carries an id in the
   // response (see includeId in the backend's publicCard()) — only a card
   // reached via its full link/QR (scan or photo upload) can be redeemed.

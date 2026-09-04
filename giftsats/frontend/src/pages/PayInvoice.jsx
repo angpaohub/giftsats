@@ -85,8 +85,14 @@ export default function PayInvoice() {
     );
   }
 
-  const { paymentRequest, amountSats, platformFee, designFee, networkFee, form, designId, marketDesign } = pending;
-  const art = resolveArt(designId, marketDesign);
+  const { paymentRequest, amountSats, platformFee, designFee, networkFee, form, designId, marketDesign, customImageUrl } =
+    pending;
+  // A card made with "your own design/pic" has no marketDesign — its art
+  // comes from customImageUrl instead, which the server already returned
+  // (and Create.jsx already saved into this same pending object) when the
+  // invoice was created. Without this, the preview here silently fell back
+  // to the default built-in art instead of the photo the sender picked.
+  const art = customImageUrl ? resolveArt(designId, { imageUrl: customImageUrl }) : resolveArt(designId, marketDesign);
   const total = amountSats + platformFee + (designFee || 0) + (networkFee || 0);
   const expired = status === 'expired';
   const paid = status === 'paid';

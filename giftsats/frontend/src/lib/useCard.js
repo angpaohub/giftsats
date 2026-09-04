@@ -48,5 +48,14 @@ export function useCard(id, { poll = false } = {}) {
     };
   }, [id, poll]);
 
-  return { card, design, art: card ? resolveArt(card.designId, design) : null, error, loading, setCard };
+  // A card made with "your own design/pic" carries customImageUrl instead of
+  // a catalogue design — without this check the card-ready and share-link
+  // pages (both built on this hook) would silently fall back to default art.
+  const art = card
+    ? card.customImageUrl
+      ? resolveArt(card.designId, { imageUrl: card.customImageUrl })
+      : resolveArt(card.designId, design)
+    : null;
+
+  return { card, design, art, error, loading, setCard };
 }
