@@ -123,7 +123,7 @@ const PLATFORM_FEE_PERCENT = 0.02;   // 2% of gift amount
 const DESIGNER_PLATFORM_CUT = 0.20;  // Platform takes 20% of design fee
 const NETWORK_FEE_SATS = 2;
 const DESIGN_TAGS = ['Minimal', 'Bold', 'Celebration', 'Seasonal'];
-const CUSTOM_IMAGE_FEE_SATS = 5000;  // surcharge for "your own design/pic" on a single card
+const CUSTOM_IMAGE_FEE_SATS = 1000;  // surcharge for "your own design/pic" on a single card
 // GS-013: amountSats was never validated as an integer or capped. Harmless
 // as long as every caller only ever sent a JSON number, but POST
 // /api/gift/create now also accepts multipart/form-data (for the custom
