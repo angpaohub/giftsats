@@ -14,7 +14,7 @@ const PAD_X = 'clamp(16px, 4vw, 64px)';
 
 const STEPS = [
   { n: '01', title: 'Pick an amount', body: 'at least 1,000 sats. Add a note and your name.' },
-  { n: '02', title: 'Pay the invoice', body: 'Lightning invoice settles in seconds. The card prints itself.' },
+  { n: '02', title: 'Pay the invoice', body: 'Lightning invoice settles in seconds. The card will be created.' },
   { n: '03', title: 'They redeem', body: 'Scan the QR, enter a Lightning address, sats arrive.' },
 ];
 
@@ -47,6 +47,96 @@ function useCountUp(target, duration = 1100) {
   }, [target, duration]);
 
   return value;
+}
+
+// Fires once, true forever after, the first time the observed node is
+// (partly) on screen. Used to hold off the mascot bounce / step-card
+// reveal until someone actually scrolls this far.
+function useInView(threshold = 0.3) {
+  const [inView, setInView] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || inView) return undefined;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            setInView(true);
+            obs.disconnect();
+          }
+        });
+      },
+      { threshold }
+    );
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, [inView, threshold]);
+
+  return [ref, inView];
+}
+
+/**
+ * The piggy mascot for "What is Sats?" — hops into place once, the first
+ * time it scrolls into view.
+ */
+function Mascot() {
+  const [ref, bounce] = useInView(0.5);
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width: 200,
+        height: 200,
+        margin: '34px auto 0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          width: 220,
+          height: 220,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(247,147,26,.2), transparent 72%)',
+        }}
+      />
+      <div
+        ref={ref}
+        style={{
+          width: 190,
+          margin: '0 auto',
+          transformOrigin: 'center bottom',
+          animation: bounce ? 'gsMascotJump 1.05s cubic-bezier(.34,1.56,.64,1) 1' : undefined,
+        }}
+      >
+        <svg viewBox="0 0 160 180" width="100%" height="100%">
+          <defs>
+            <clipPath id="gsBlobClip2">
+              <ellipse cx={80} cy={92} rx={48} ry={52} />
+            </clipPath>
+          </defs>
+          <ellipse cx={80} cy={164} rx={38} ry={7} fill="#1B1714" opacity={0.1} />
+          <ellipse cx={60} cy={158} rx={13} ry={8} fill="#F7931A" />
+          <ellipse cx={100} cy={158} rx={13} ry={8} fill="#F7931A" />
+          <ellipse cx={34} cy={100} rx={9} ry={15} fill="#F7931A" transform="rotate(-15 34 100)" />
+          <ellipse cx={122} cy={62} rx={9} ry={17} fill="#F7931A" transform="rotate(35 122 62)" />
+          <ellipse cx={80} cy={92} rx={48} ry={52} fill="#F7931A" />
+          <g clipPath="url(#gsBlobClip2)">
+            <ellipse cx={98} cy={118} rx={46} ry={46} fill="#D9790E" opacity={0.55} />
+          </g>
+          <ellipse cx={62} cy={66} rx={14} ry={10} fill="#FFFFFF" opacity={0.22} />
+          <polygon points="78,26 70,44 76,44 74,55 89,37 80,37 83,26" fill="#C77A12" />
+          <path d="M64,88 Q71,80 78,88" stroke="#1B1714" strokeWidth={3.4} fill="none" strokeLinecap="round" />
+          <path d="M84,88 Q91,80 98,88" stroke="#1B1714" strokeWidth={3.4} fill="none" strokeLinecap="round" />
+          <path d="M66,110 Q80,123 101,104" stroke="#1B1714" strokeWidth={3.4} fill="none" strokeLinecap="round" />
+        </svg>
+      </div>
+    </div>
+  );
 }
 
 // Thousands groups after the first are set a shade lighter, and the separators
@@ -249,6 +339,7 @@ function HeroCard() {
 
 export default function Landing() {
   const [stats, setStats] = useState(null);
+  const [stepsRef, stepsVisible] = useInView(0.3);
 
   useEffect(() => {
     api.stats().then(setStats).catch(() => {});
@@ -387,24 +478,100 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── How it works, in three ─────────────────────────── */}
-      <section id="how" style={{ ...SECTION, padding: `clamp(44px, 7vw, 96px) ${PAD_X} 40px` }}>
+      {/* ── What is Sats? / How it works, side by side ──────── */}
+      <section id="how" style={{ ...SECTION, padding: `clamp(30px, 6vw, 64px) ${PAD_X} 0` }}>
         <div
           style={{
             borderTop: `1px solid ${T.hair}`,
-            paddingTop: 40,
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))',
-            gap: 'clamp(26px,3vw,44px)',
+            paddingTop: 56,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 64,
+            alignItems: 'flex-start',
           }}
         >
-          {STEPS.map((s) => (
-            <div key={s.n}>
-              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.orangeDeep }}>{s.n}</div>
-              <div style={{ fontFamily: T.serif, fontSize: 26, marginTop: 12 }}>{s.title}</div>
-              <p style={{ fontSize: 15, lineHeight: 1.6, color: T.text2, marginTop: 10 }}>{s.body}</p>
+          <div style={{ flex: '1 1 380px', minWidth: 0, textAlign: 'center' }}>
+            <Mascot />
+            <div
+              style={{
+                fontFamily: T.serif,
+                fontSize: 'clamp(38px, 6vw, 58px)',
+                lineHeight: 1.05,
+                letterSpacing: '-0.02em',
+                marginTop: 30,
+              }}
+            >
+              What is <span style={{ fontStyle: 'italic', color: T.orangeDeep }}>“Sats” </span>?
             </div>
-          ))}
+            <p
+              style={{
+                fontFamily: T.serif,
+                fontSize: 20,
+                lineHeight: 1.6,
+                color: T.text2,
+                margin: '20px auto 0',
+                maxWidth: 440,
+              }}
+            >
+              Short for “satoshi.” One bitcoin splits into 100,000,000 sats — the same way a dollar splits into
+              cents.
+            </p>
+          </div>
+
+          <div style={{ flex: '1 1 380px', minWidth: 0 }} ref={stepsRef}>
+            <div
+              style={{
+                fontFamily: T.serif,
+                fontSize: 'clamp(32px, 4vw, 44px)',
+                lineHeight: 1.08,
+                letterSpacing: '-0.015em',
+                marginTop: 20,
+              }}
+            >
+              Start to "Gift<span style={{ color: T.orangeDeep }}>sats</span>"
+            </div>
+            <div style={{ marginTop: 36, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {STEPS.map((s, i) => (
+                <div
+                  key={s.n}
+                  style={{
+                    display: 'flex',
+                    gap: 18,
+                    alignItems: 'flex-start',
+                    padding: '22px 24px',
+                    border: '1px solid rgba(27,23,20,.12)',
+                    borderRadius: 16,
+                    background: '#FBF9F4',
+                    transition: `transform .2s ${i * 120}ms, box-shadow .2s, border-color .2s`,
+                    opacity: stepsVisible ? 1 : 0,
+                    transform: stepsVisible ? 'translateY(0)' : 'translateY(18px)',
+                  }}
+                >
+                  <div
+                    style={{
+                      flex: '0 0 auto',
+                      width: 36,
+                      height: 36,
+                      borderRadius: '50%',
+                      background: 'rgba(247,147,26,.14)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontFamily: T.mono,
+                      fontSize: 13,
+                      color: T.orangeDeep,
+                    }}
+                  >
+                    {s.n}
+                  </div>
+                  <div>
+                    <div style={{ fontFamily: T.serif, fontSize: 24 }}>{s.title}</div>
+                    <p style={{ fontSize: 15, lineHeight: 1.6, color: T.text2, marginTop: 8 }}>{s.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 

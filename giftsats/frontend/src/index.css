@@ -192,6 +192,31 @@ p {
   }
 }
 
+/* The "What is Sats?" piggy mascot hops once when it scrolls into view. */
+@keyframes gsMascotJump {
+  0% {
+    transform: translateY(0) scale(1, 1);
+  }
+  12% {
+    transform: translateY(2px) scale(1.1, 0.88);
+  }
+  38% {
+    transform: translateY(-30px) scale(0.95, 1.07);
+  }
+  55% {
+    transform: translateY(-30px) scale(0.95, 1.07);
+  }
+  72% {
+    transform: translateY(2px) scale(1.08, 0.9);
+  }
+  88% {
+    transform: translateY(-6px) scale(0.98, 1.03);
+  }
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+}
+
 @keyframes gsFloat {
   0%,
   100% {
