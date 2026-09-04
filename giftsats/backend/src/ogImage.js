@@ -57,8 +57,8 @@ async function backgroundBuffer(art) {
  * front-card look: same background art, GIFTSATS mark, and big amount+sats
  * typography, with the sender's message and credit line underneath.
  */
-export async function renderCardOgImage({ amountSats, senderNote, recipientName, senderName, designId, design }) {
-  const art = resolveOgArt(designId, design);
+export async function renderCardOgImage({ amountSats, senderNote, recipientName, senderName, designId, design, customImageUrl }) {
+  const art = resolveOgArt(designId, design, customImageUrl);
   const sats = Number(amountSats || 0).toLocaleString('en-US');
   const credit = [recipientName && `For ${recipientName}`, senderName && `from ${senderName}`]
     .filter(Boolean)

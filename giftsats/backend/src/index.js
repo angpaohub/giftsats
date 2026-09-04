@@ -1073,6 +1073,7 @@ app.get('/og/card/:id.png', async (req, res) => {
       senderName: card.senderName,
       designId: card.designId,
       design,
+      customImageUrl: card.customImageUrl,
     });
 
     res.setHeader('Content-Type', 'image/png');

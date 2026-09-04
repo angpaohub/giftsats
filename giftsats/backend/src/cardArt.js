@@ -62,8 +62,17 @@ const OVER_IMAGE = {
  * Resolve a card's front into whatever the og-image renderer needs:
  * either { kind:'solid'|'radial', ... } or { image: url, ... } for an
  * uploaded design front.
+ *
+ * customImageUrl (a card's own "your own design/pic" photo) takes priority
+ * over everything else, same as the frontend's resolveArt() in
+ * frontend/src/lib/designs.js — without this check the link preview shown
+ * by iMessage/Slack/Twitter for a custom-photo card silently fell back to
+ * the generic built-in art instead of the sender's actual photo.
  */
-export function resolveOgArt(designId, design) {
+export function resolveOgArt(designId, design, customImageUrl) {
+  if (customImageUrl) {
+    return { ...OVER_IMAGE, image: customImageUrl };
+  }
   if (design?.imageUrl) {
     return { ...OVER_IMAGE, ...(design.palette || {}), image: design.imageUrl };
   }
