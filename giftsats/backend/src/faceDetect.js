@@ -34,8 +34,8 @@ import sharp from 'sharp';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MODEL_DIR = path.join(__dirname, '..', 'models', 'tiny_face_detector');
 
-const DEFAULT_SCORE_THRESHOLD = 0.5;
-const DEFAULT_INPUT_SIZE = 320;
+const DEFAULT_SCORE_THRESHOLD = 0.3;
+const DEFAULT_INPUT_SIZE = 512;
 
 let modelReadyPromise = null;
 
