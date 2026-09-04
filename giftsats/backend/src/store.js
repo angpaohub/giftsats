@@ -55,6 +55,14 @@ export async function initDB() {
   // and deletes the R2 object once expires_at has passed, regardless of how
   // the card was resolved. The card row itself is never deleted.
   await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS custom_image_url TEXT`);
+  // custom_image_fee: the surcharge actually charged for that photo, stored
+  // the same way platform_fee/design_fee already are — not recomputed from
+  // today's CUSTOM_IMAGE_FEE_SATS constant, so a card keeps the fee it was
+  // actually invoiced for even if that constant changes later. Paid out to
+  // PLATFORM_WALLET alongside platform_fee at mint time (see refreshCard()
+  // in index.js). Cards minted before this column existed default to 0 —
+  // same backfill approach as every other column added here.
+  await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS custom_image_fee INTEGER NOT NULL DEFAULT 0`);
 
   // ── Marketplace designs table ────────────────────────
   await pool.query(`
@@ -146,14 +154,14 @@ export async function restoreDesign(id) {
 }
 
 // ── Gift card CRUD ───────────────────────────────────────
-export async function createGiftCard({ amountSats, designId, platformFee, designFee, senderNote, recipientName, senderName, senderLightningAddress, paymentHash, paymentRequest, customImageUrl }) {
+export async function createGiftCard({ amountSats, designId, platformFee, designFee, senderNote, recipientName, senderName, senderLightningAddress, paymentHash, paymentRequest, customImageUrl, customImageFee }) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   await pool.query(
     `INSERT INTO gift_cards
-      (id, amount_sats, design_id, platform_fee, design_fee, sender_note, recipient_name, sender_name, sender_lightning_address, payment_hash, payment_request, status, expires_at, custom_image_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13)`,
-    [id, amountSats, designId, platformFee ?? 0, designFee ?? 0, senderNote ?? '', recipientName ?? '', senderName ?? '', senderLightningAddress ?? null, paymentHash, paymentRequest, expiresAt, customImageUrl ?? null]
+      (id, amount_sats, design_id, platform_fee, design_fee, sender_note, recipient_name, sender_name, sender_lightning_address, payment_hash, payment_request, status, expires_at, custom_image_url, custom_image_fee)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13, $14)`,
+    [id, amountSats, designId, platformFee ?? 0, designFee ?? 0, senderNote ?? '', recipientName ?? '', senderName ?? '', senderLightningAddress ?? null, paymentHash, paymentRequest, expiresAt, customImageUrl ?? null, customImageFee ?? 0]
   );
   return getGiftCard(id);
 }
@@ -413,6 +421,7 @@ function dbRowToCard(row) {
     refundStatus:           row.refund_status,
     createdAt:              row.created_at,
     customImageUrl:         row.custom_image_url,
+    customImageFee:         row.custom_image_fee || 0,
   };
 }
 

@@ -176,6 +176,7 @@ function publicCard(card, { includeId = true } = {}) {
     refundStatus:  publicRefundStatus(card),
     createdAt:     card.createdAt,
     customImageUrl: card.customImageUrl || null,
+    customImageFee: card.customImageFee || 0,
   };
 }
 
@@ -562,11 +563,15 @@ app.post('/api/gift/create', upload.single('image'), async (req, res) => {
       amountSats: amt,
       designId: design?.id || designCode || 'giftsats-classic',
       platformFee,
-      // customImageFee isn't paid out to anyone (there's no designer row for
-      // a one-off photo) — it's just extra sats collected in the same
-      // invoice, same as platformFee/networkFee already are, so it's not
-      // folded into designFee (which does trigger a payout on mint below).
+      // customImageFee has no designer to pay — there's no catalogue row for
+      // a one-off photo — so it's not folded into designFee (which triggers
+      // a separate 80/20 designer/platform split on mint below). Instead it
+      // rides along with platformFee straight to PLATFORM_WALLET at mint
+      // time (see refreshCard()). Stored on the card row (not recomputed
+      // from today's CUSTOM_IMAGE_FEE_SATS) so a card always pays out the
+      // fee it was actually invoiced for.
       designFee,
+      customImageFee,
       senderNote: note,
       recipientName: to,
       senderName: from,
@@ -626,8 +631,12 @@ async function refreshCard(giftCard) {
       }
 
       // ── Pay platform wallet (non-fatal) ────────────
-      if (process.env.PLATFORM_WALLET && giftCard.platformFee > 0) {
-        payLightningAddress(process.env.PLATFORM_WALLET, giftCard.platformFee)
+      // customImageFee rides along here too — same destination as
+      // platformFee, no separate payout logic needed (unlike designFee,
+      // there's no third party to split it with).
+      const platformPayout = (giftCard.platformFee || 0) + (giftCard.customImageFee || 0);
+      if (process.env.PLATFORM_WALLET && platformPayout > 0) {
+        payLightningAddress(process.env.PLATFORM_WALLET, platformPayout)
           .catch(e => console.error('platform fee error (non-fatal):', e.message));
       }
 
