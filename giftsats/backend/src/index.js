@@ -3,8 +3,9 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import path from 'path';
+import sharp from 'sharp';
 import { randomUUID, createHash, timingSafeEqual } from 'crypto';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { createInvoice, checkPayment, payLightningAddress, getChannelBalance, getNodeInfo, listChannels, listInvoices, listPayments, payInvoice, decodeInvoice, getOwnPubkey } from './lnd.js';
 import {
   initDB, createGiftCard, getGiftCard, getGiftCardByCode, updateGiftCard, getStats,
@@ -13,8 +14,10 @@ import {
   claimForRedeem, finalizeRedeem, markRedeemUnknown, releaseRedeemClaim,
   claimForMint,
   claimForRefund, finalizeRefund, markRefundUnknown, releaseRefundClaim, claimForForfeit,
+  listCardsWithExpiredImages, clearCardImage,
 } from './store.js';
 import { renderCardOgImage } from './ogImage.js';
+import { detectFace, ensureModelLoaded } from './faceDetect.js';
 
 dotenv.config();
 
@@ -65,14 +68,43 @@ const r2 = new S3Client({
 const R2_BUCKET = process.env.R2_BUCKET || 'giftsats-designs';
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || process.env.R2_ENDPOINT;
 
-async function uploadToR2(buffer, filename, mimetype) {
+// prefix distinguishes the public marketplace catalogue ('designs', browsable
+// via /explore and reusable by anyone) from one-off personal card fronts
+// ('cards', attached to a single gift and never listed anywhere public).
+async function uploadToR2(buffer, filename, mimetype, prefix = 'designs') {
   await r2.send(new PutObjectCommand({
     Bucket: R2_BUCKET,
-    Key: `designs/${filename}`,
+    Key: `${prefix}/${filename}`,
     Body: buffer,
     ContentType: mimetype,
   }));
-  return `${R2_PUBLIC_URL}/designs/${filename}`;
+  return `${R2_PUBLIC_URL}/${prefix}/${filename}`;
+}
+
+async function deleteFromR2Url(url) {
+  if (!url) return;
+  const key = url.replace(`${R2_PUBLIC_URL}/`, '');
+  if (!key || key === url) return; // url didn't match our own bucket — don't guess
+  await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+}
+
+// Re-encodes an uploaded image before it's used for anything else (face
+// check, storage). This strips EXIF/metadata and discards any bytes hidden
+// past the actual pixel data (sharp decodes to raw pixels and re-encodes
+// fresh, so a polyglot file can't smuggle a second payload through), and
+// caps dimensions against decompression-bomb-style uploads. sharp's default
+// pixel-count limit (enabled unless explicitly disabled) is defense in depth
+// on top of the resize cap here.
+async function reencodeImage(buffer) {
+  const img = sharp(buffer);
+  const meta = await img.metadata();
+  const format = meta.format === 'png' ? 'png' : meta.format === 'webp' ? 'webp' : 'jpeg';
+  const mimetype = format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg';
+  const out = await img
+    .resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true })
+    .toFormat(format, format === 'jpeg' ? { quality: 90 } : {})
+    .toBuffer();
+  return { buffer: out, format, mimetype };
 }
 
 // ── Multer: memory storage (buffer → R2) ─────────────────
@@ -91,6 +123,14 @@ const PLATFORM_FEE_PERCENT = 0.02;   // 2% of gift amount
 const DESIGNER_PLATFORM_CUT = 0.20;  // Platform takes 20% of design fee
 const NETWORK_FEE_SATS = 2;
 const DESIGN_TAGS = ['Minimal', 'Bold', 'Celebration', 'Seasonal'];
+const CUSTOM_IMAGE_FEE_SATS = 5000;  // surcharge for "your own design/pic" on a single card
+// GS-013: amountSats was never validated as an integer or capped. Harmless
+// as long as every caller only ever sent a JSON number, but POST
+// /api/gift/create now also accepts multipart/form-data (for the custom
+// photo upload below) where every field arrives as a string — "5000" + 100
+// is string concatenation, not 5100. Fixed properly below instead of papered
+// over; MAX_GIFT_SATS also closes the "no upper bound" half of GS-013.
+const MAX_GIFT_SATS = 10_000_000;
 
 // Anyone holding the share link can call GET /api/gift/:id, so the public shape
 // of a card must not carry the payment request, the payment hash, the sender's
@@ -135,6 +175,7 @@ function publicCard(card, { includeId = true } = {}) {
     expiresAt:     card.expiresAt,
     refundStatus:  publicRefundStatus(card),
     createdAt:     card.createdAt,
+    customImageUrl: card.customImageUrl || null,
   };
 }
 
@@ -374,10 +415,41 @@ app.post('/api/designs', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: `Category must be one of: ${DESIGN_TAGS.join(', ')}` });
     }
 
+    // Re-encode first: every downstream step (face check, upload) works off
+    // this sanitized buffer, never the raw upload bytes.
+    let reencoded;
+    try {
+      reencoded = await reencodeImage(req.file.buffer);
+    } catch (e) {
+      return res.status(400).json({ error: 'Could not process that image — is it a valid PNG/JPG/WEBP?' });
+    }
+
+    // Marketplace designs are public and reusable by anyone who pastes the
+    // code (see /explore) — unlike a personal card photo (POST
+    // /api/gift/create), a real person's face ending up here is a consent
+    // problem, not just a moderation one. Reject outright: no upload to R2,
+    // no row in `designs`, no code ever generated or returned. Nothing about
+    // a rejected submission is kept anywhere, by design — see the note in
+    // faceDetect.js for why this stays a local, on-device check.
+    try {
+      const { hasFace, topScore } = await detectFace(reencoded.buffer);
+      if (hasFace) {
+        console.warn(`[design-submit] rejected — face detected (score ${topScore.toFixed(2)})`);
+        return res.status(422).json({
+          error: "This image looks like it contains a photo of a person. Marketplace fronts can't include real faces — try a different image, or use your own photo directly on a single gift card instead (Create → Your own design/pic).",
+        });
+      }
+    } catch (e) {
+      // Fail closed: if the check itself is broken, don't publish
+      // unmoderated content — better a submitter retries than a bad image
+      // slips through because detection errored out.
+      console.error('[design-submit] face-detection error, rejecting submission:', e.message);
+      return res.status(503).json({ error: 'Could not verify this image right now — please try again shortly.' });
+    }
+
     const price = Math.max(0, parseInt(priceSats) || 0);
-    const ext = path.extname(req.file.originalname).toLowerCase();
-    const filename = `${randomUUID()}${ext}`;
-    const imageUrl = await uploadToR2(req.file.buffer, filename, req.file.mimetype);
+    const filename = `${randomUUID()}.${reencoded.format}`;
+    const imageUrl = await uploadToR2(reencoded.buffer, filename, reencoded.mimetype, 'designs');
 
     const design = await createDesign({
       name: String(name).slice(0, 60),
@@ -402,12 +474,21 @@ app.post('/api/designs', upload.single('image'), async (req, res) => {
 });
 
 // ── Create gift card ─────────────────────────────────────
-app.post('/api/gift/create', async (req, res) => {
+// upload.single('image') only engages for multipart/form-data requests (the
+// "your own design/pic" option below); a plain JSON request — the existing
+// preset/marketplace-design flow — passes straight through untouched.
+app.post('/api/gift/create', upload.single('image'), async (req, res) => {
   try {
     const { amountSats, designCode, senderNote, recipientName, senderName, senderLightningAddress } = req.body;
 
-    if (!amountSats || amountSats < 1000) {
-      return res.status(400).json({ error: 'Minimum 1000 sats' });
+    // GS-013 fix: coerce and validate as an integer explicitly. multipart
+    // fields (used when a custom photo is attached) always arrive as
+    // strings — `"5000" + 100` is string concatenation, not addition — so
+    // this can no longer be a bare `amountSats < 1000` truthy/relational
+    // check the way it used to be.
+    const amt = Number(amountSats);
+    if (!Number.isInteger(amt) || amt < 1000 || amt > MAX_GIFT_SATS) {
+      return res.status(400).json({ error: `Amount must be a whole number between 1,000 and ${MAX_GIFT_SATS.toLocaleString()} sats` });
     }
 
     // These three land on the printed card, so cap them rather than trusting
@@ -423,6 +504,10 @@ app.post('/api/gift/create', async (req, res) => {
       }
     }
 
+    if (designCode && req.file) {
+      return res.status(400).json({ error: 'Choose either a design code or your own photo, not both' });
+    }
+
     // Resolve design
     let design = null;
     if (designCode) {
@@ -436,10 +521,32 @@ app.post('/api/gift/create', async (req, res) => {
       }
     }
 
+    // "Your own design/pic" — a one-off photo for this single card only.
+    // Deliberately NOT run through detectFace(): unlike a marketplace
+    // submission (public, reusable by anyone), this image is never listed
+    // anywhere and is only ever shown to whoever holds this one card's link —
+    // putting your own face on your own gift is the whole point. It's still
+    // re-encoded through the same reencodeImage() as marketplace uploads
+    // (strips metadata, discards anything hidden past the pixel data, caps
+    // dimensions) and stored under a separate R2 prefix ('cards', not
+    // 'designs') so it's never reachable through /api/designs or /explore.
+    let customImageUrl = null;
+    if (req.file) {
+      let reencoded;
+      try {
+        reencoded = await reencodeImage(req.file.buffer);
+      } catch (e) {
+        return res.status(400).json({ error: 'Could not process that image — is it a valid PNG/JPG/WEBP?' });
+      }
+      const filename = `${randomUUID()}.${reencoded.format}`;
+      customImageUrl = await uploadToR2(reencoded.buffer, filename, reencoded.mimetype, 'cards');
+    }
+
     // Fee calculation
-    const platformFee = Math.ceil(amountSats * PLATFORM_FEE_PERCENT);
+    const platformFee = Math.ceil(amt * PLATFORM_FEE_PERCENT);
     const designFee = design?.priceSats || 0;
-    const totalSats = amountSats + platformFee + designFee + NETWORK_FEE_SATS;
+    const customImageFee = req.file ? CUSTOM_IMAGE_FEE_SATS : 0;
+    const totalSats = amt + platformFee + designFee + customImageFee + NETWORK_FEE_SATS;
 
     // Check inbound capacity
     const { remoteSats } = await getChannelBalance();
@@ -450,11 +557,15 @@ app.post('/api/gift/create', async (req, res) => {
       });
     }
 
-    const invoice = await createInvoice(totalSats, `GiftSats: ${amountSats} sats`);
+    const invoice = await createInvoice(totalSats, `GiftSats: ${amt} sats`);
     const giftCard = await createGiftCard({
-      amountSats,
+      amountSats: amt,
       designId: design?.id || designCode || 'giftsats-classic',
       platformFee,
+      // customImageFee isn't paid out to anyone (there's no designer row for
+      // a one-off photo) — it's just extra sats collected in the same
+      // invoice, same as platformFee/networkFee already are, so it's not
+      // folded into designFee (which does trigger a payout on mint below).
       designFee,
       senderNote: note,
       recipientName: to,
@@ -462,6 +573,7 @@ app.post('/api/gift/create', async (req, res) => {
       senderLightningAddress: senderLightningAddress || null,
       paymentHash: invoice.r_hash,
       paymentRequest: invoice.payment_request,
+      customImageUrl,
     });
 
     res.json({
@@ -469,11 +581,13 @@ app.post('/api/gift/create', async (req, res) => {
       redeemCode: redeemCodeFor(giftCard.id),
       paymentRequest: invoice.payment_request,
       totalSats,
-      amountSats,
+      amountSats: amt,
       platformFee,
       designFee,
+      customImageFee,
       networkFee: NETWORK_FEE_SATS,
       design: design || null,
+      customImageUrl,
       expiresAt: giftCard.expiresAt,
       // The LND invoice is created with expiry: 600 — let the client count down
       // against the server's clock instead of guessing ten minutes locally.
@@ -837,6 +951,32 @@ async function processExpiredCards() {
   }
 }
 
+// ── Card photo retention cleanup (runs every hour) ───────
+// Personal card photos (POST /api/gift/create, "your own design/pic") are
+// kept only as long as the redeem window — 30 days from creation, the same
+// `expires_at` used for refunds above. Unlike processExpiredCards, this does
+// NOT filter by status: a card's photo should disappear 30 days after
+// creation whether the card was redeemed, refunded, or forfeited. Only the
+// image (R2 object + the DB reference to it) is removed — the card row
+// itself is kept for stats/audit, same as every other outcome already does.
+async function cleanupExpiredCardImages() {
+  const cards = await listCardsWithExpiredImages();
+  if (cards.length === 0) return;
+
+  console.log(`[image-cleanup] Removing ${cards.length} expired card photo(s)`);
+
+  for (const card of cards) {
+    try {
+      await deleteFromR2Url(card.customImageUrl);
+      await clearCardImage(card.id);
+    } catch (err) {
+      // Leave the DB reference in place on failure so next hour's run
+      // retries — a failed R2 delete shouldn't silently be forgotten.
+      console.error(`[image-cleanup] Failed to clean up image for card ${card.id}:`, err.message);
+    }
+  }
+}
+
 // ── OG preview for /card/:id (for crawlers) ──────────────
 // The backend's own public URL — /card/:id is proxied here from the
 // frontend's domain (see frontend/public/_redirects) so crawlers get OG tags,
@@ -1000,11 +1140,22 @@ app.post('/api/admin/pay', requireAdminKey, async (req, res) => {
 
 // ── Start ────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
+
+// Warm the face-detection model in the background so the first marketplace
+// submission isn't slowed by a cold load. Deliberately NOT awaited/chained
+// into the startup .catch() below — a missing/corrupt models/ directory
+// shouldn't take down payment endpoints that have nothing to do with design
+// moderation. If this fails, detectFace() retries lazily and fails closed
+// (rejects the submission with a 503) rather than skip the check silently.
+ensureModelLoaded().catch(e => console.error('⚠️  face-detection model failed to preload (will retry lazily):', e.message));
+
 initDB()
   .then(() => {
     app.listen(PORT, () => console.log(`GiftSats backend running on :${PORT}`));
     processExpiredCards();
+    cleanupExpiredCardImages();
     setInterval(processExpiredCards, 60 * 60 * 1000);
+    setInterval(cleanupExpiredCardImages, 60 * 60 * 1000);
   })
   .catch(err => {
     console.error('Failed to init DB:', err);

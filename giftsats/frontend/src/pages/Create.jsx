@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Page from '../components/Page.jsx';
 import GiftCard from '../components/GiftCard.jsx';
@@ -21,6 +21,8 @@ const PRESETS = [1000, 2100, 5000, 10000, 21000];
 const MIN_SATS = 1000;
 const SERVICE_FEE_PERCENT = 2;
 const NETWORK_FEE_SATS = 2;
+const CUSTOM_IMAGE_FEE_SATS = 5000;
+const CUSTOM_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const REDEEM_DAYS = 30;
 const MESSAGE_MAX = 90;
 const DRAFT_KEY = 'giftsats_form';
@@ -124,6 +126,89 @@ function Swatch({ art, active, onClick, name, author }) {
   );
 }
 
+function UploadIcon() {
+  return (
+    <span style={{ width: 16, height: 16, display: 'block' }}>
+      <svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 16V4M12 4l-4 4M12 4l4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+      </svg>
+    </span>
+  );
+}
+
+// The fourth tile in the design grid: pick a one-off photo for this single
+// card instead of a preset or marketplace design. Mutually exclusive with
+// both (enforced here and again on the backend) — this image is never
+// listed anywhere, unlike a marketplace submission.
+function UploadSwatch({ preview, onPick, onClear, error }) {
+  const inputRef = useRef(null);
+  return (
+    <div style={{ flex: '1 1 130px', minWidth: 118 }}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          onPick(e.target.files?.[0] || null);
+          e.target.value = ''; // allow re-picking the same file after REMOVE
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        style={{
+          width: '100%',
+          padding: '12px 12px 14px',
+          borderRadius: 12,
+          textAlign: 'left',
+          background: preview ? 'rgba(247,147,26,.08)' : T.surface,
+          border: preview ? `1.5px solid ${T.orange}` : `1px dashed ${T.hair16}`,
+          transition: 'border-color .15s',
+        }}
+      >
+        <div
+          style={{
+            height: 74,
+            borderRadius: 9,
+            overflow: 'hidden',
+            border: `1px solid ${T.hair16}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: preview ? `#15120F url(${preview}) center/cover` : T.surfaceWarm,
+            color: T.muted,
+          }}
+        >
+          {!preview && <UploadIcon />}
+        </div>
+        <div style={{ fontFamily: T.serif, fontWeight: 600, fontSize: 14.5, marginTop: 11 }}>
+          Your own design/pic
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.orangeDeep, marginTop: 4 }}>
+          +{fmt(CUSTOM_IMAGE_FEE_SATS)} sats
+        </div>
+      </button>
+      {preview && (
+        <div
+          onClick={onClear}
+          style={{
+            fontFamily: T.mono,
+            fontSize: 11,
+            letterSpacing: '0.1em',
+            color: T.orangeDeep,
+            cursor: 'pointer',
+            marginTop: 8,
+          }}
+        >
+          REMOVE
+        </div>
+      )}
+      {error && <div style={{ fontSize: 12, color: '#B3341E', marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
+
 export default function Create() {
   const navigate = useNavigate();
   const [form, setForm] = useState(loadDraft);
@@ -131,8 +216,38 @@ export default function Create() {
   const [codeState, setCodeState] = useState('idle'); // idle | loading | ok | bad
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [customImage, setCustomImage] = useState(null); // File, not persisted in the draft
+  const [customImagePreview, setCustomImagePreview] = useState(null);
+  const [imageError, setImageError] = useState('');
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+
+  function clearCustomImage() {
+    if (customImagePreview) URL.revokeObjectURL(customImagePreview);
+    setCustomImage(null);
+    setCustomImagePreview(null);
+    setImageError('');
+  }
+
+  function pickCustomImage(file) {
+    if (!file) return;
+    if (!/\.(png|jpe?g|webp)$/i.test(file.name)) {
+      setImageError('Photo must be PNG, JPG or WEBP.');
+      return;
+    }
+    if (file.size > CUSTOM_IMAGE_MAX_BYTES) {
+      setImageError('That image is over 5 MB. Compress it and try again.');
+      return;
+    }
+    setImageError('');
+    if (customImagePreview) URL.revokeObjectURL(customImagePreview);
+    setCustomImage(file);
+    setCustomImagePreview(URL.createObjectURL(file));
+    // Own photo, a preset, and a marketplace code are mutually exclusive —
+    // matches the backend rejecting designCode + an uploaded file together.
+    set({ code: '' });
+    setMarketDesign(null);
+  }
 
   useEffect(() => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...form, savedAt: Date.now() }));
@@ -165,20 +280,25 @@ export default function Create() {
   const amount = Number(form.amount) || 0;
   const serviceFee = Math.ceil((amount * SERVICE_FEE_PERCENT) / 100);
   const designFee = marketDesign?.priceSats || 0;
-  const total = amount + serviceFee + NETWORK_FEE_SATS + designFee;
+  const customImageFee = customImage ? CUSTOM_IMAGE_FEE_SATS : 0;
+  const total = amount + serviceFee + NETWORK_FEE_SATS + designFee + customImageFee;
 
   const designId = marketDesign ? marketDesign.id : form.designId;
-  const art = resolveArt(designId, marketDesign);
+  const art = customImage
+    ? resolveArt(designId, { imageUrl: customImagePreview })
+    : resolveArt(designId, marketDesign);
 
   const amountOk = Number.isFinite(amount) && amount >= MIN_SATS;
   const refundOk = !form.refund.trim() || isLightningAddress(form.refund);
-  const ready = amountOk && refundOk && !submitting;
+  const ready = amountOk && refundOk && !imageError && !submitting;
 
   const hint = !amountOk
     ? `Minimum ${fmt(MIN_SATS)} sats.`
     : !refundOk
       ? 'That refund address does not look like a Lightning address.'
-      : 'Pay the Lightning invoice on the next step — no account needed.';
+      : imageError
+        ? imageError
+        : 'Pay the Lightning invoice on the next step — no account needed.';
 
   async function handleSubmit() {
     if (!ready) return;
@@ -187,11 +307,12 @@ export default function Create() {
     try {
       const data = await api.createGift({
         amountSats: amount,
-        designCode: designId,
+        designCode: customImage ? undefined : designId,
         senderNote: form.message.trim(),
         recipientName: form.to.trim(),
         senderName: form.from.trim(),
         senderLightningAddress: form.refund.trim() || undefined,
+        image: customImage || undefined,
       });
       // Kept so a refresh (or a trip out to a wallet app) lands back on the
       // invoice.
@@ -239,10 +360,19 @@ export default function Create() {
                   art={d}
                   name={d.name}
                   author={d.author}
-                  active={!marketDesign && form.designId === d.id}
-                  onClick={() => set({ designId: d.id, code: '' })}
+                  active={!marketDesign && !customImage && form.designId === d.id}
+                  onClick={() => {
+                    set({ designId: d.id, code: '' });
+                    clearCustomImage();
+                  }}
                 />
               ))}
+              <UploadSwatch
+                preview={customImagePreview}
+                error={imageError}
+                onPick={pickCustomImage}
+                onClear={clearCustomImage}
+              />
             </div>
 
             <div style={{ marginTop: 30 }}>
@@ -252,7 +382,10 @@ export default function Create() {
               <Input
                 placeholder="gfts-a3x9k — paste code from Explore"
                 value={form.code}
-                onChange={(e) => set({ code: e.target.value.trim() })}
+                onChange={(e) => {
+                  set({ code: e.target.value.trim() });
+                  if (e.target.value.trim()) clearCustomImage();
+                }}
                 style={{ fontFamily: T.mono, fontSize: 14 }}
               />
               {codeState === 'loading' && (
@@ -451,6 +584,7 @@ export default function Create() {
               [`Service fee (${SERVICE_FEE_PERCENT}%)`, `${fmt(serviceFee)} sats`],
               ['Network fee', `${fmt(NETWORK_FEE_SATS)} sats`],
               ...(designFee > 0 ? [[`Design fee · ${marketDesign.name}`, `${fmt(designFee)} sats`]] : []),
+              ...(customImageFee > 0 ? [['Your own design/pic', `${fmt(customImageFee)} sats`]] : []),
             ].map(([k, v]) => (
               <div
                 key={k}

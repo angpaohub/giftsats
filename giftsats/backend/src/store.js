@@ -47,6 +47,14 @@ export async function initDB() {
   // (nothing writes or reads it anymore). Left in place unused, same as the
   // orphaned cashu_token / cashu_quote columns above.
   await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS redeem_secret_hash TEXT`);
+  // custom_image_url: R2 URL of a one-off photo attached to this single card
+  // (the "your own design/pic" option, POST /api/gift/create) — separate from
+  // the public `designs` marketplace catalogue entirely. Retained only for
+  // the 30-day redeem window (expires_at, same field the refund job already
+  // uses): the hourly cleanupExpiredCardImages() job in index.js nulls this
+  // and deletes the R2 object once expires_at has passed, regardless of how
+  // the card was resolved. The card row itself is never deleted.
+  await pool.query(`ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS custom_image_url TEXT`);
 
   // ── Marketplace designs table ────────────────────────
   await pool.query(`
@@ -138,14 +146,14 @@ export async function restoreDesign(id) {
 }
 
 // ── Gift card CRUD ───────────────────────────────────────
-export async function createGiftCard({ amountSats, designId, platformFee, designFee, senderNote, recipientName, senderName, senderLightningAddress, paymentHash, paymentRequest }) {
+export async function createGiftCard({ amountSats, designId, platformFee, designFee, senderNote, recipientName, senderName, senderLightningAddress, paymentHash, paymentRequest, customImageUrl }) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   await pool.query(
     `INSERT INTO gift_cards
-      (id, amount_sats, design_id, platform_fee, design_fee, sender_note, recipient_name, sender_name, sender_lightning_address, payment_hash, payment_request, status, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)`,
-    [id, amountSats, designId, platformFee ?? 0, designFee ?? 0, senderNote ?? '', recipientName ?? '', senderName ?? '', senderLightningAddress ?? null, paymentHash, paymentRequest, expiresAt]
+      (id, amount_sats, design_id, platform_fee, design_fee, sender_note, recipient_name, sender_name, sender_lightning_address, payment_hash, payment_request, status, expires_at, custom_image_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13)`,
+    [id, amountSats, designId, platformFee ?? 0, designFee ?? 0, senderNote ?? '', recipientName ?? '', senderName ?? '', senderLightningAddress ?? null, paymentHash, paymentRequest, expiresAt, customImageUrl ?? null]
   );
   return getGiftCard(id);
 }
@@ -337,6 +345,28 @@ export async function listExpiredUnredeemed() {
   return rows.map(dbRowToCard);
 }
 
+// Cards whose personal photo has outlived the 30-day redeem window — no
+// status/refund_status filter, unlike listExpiredUnredeemed above: a photo
+// comes down whether the card was redeemed, refunded, or forfeited. Only
+// rows that still have an image to clean up are returned.
+export async function listCardsWithExpiredImages() {
+  const { rows } = await pool.query(`
+    SELECT * FROM gift_cards
+    WHERE custom_image_url IS NOT NULL
+      AND expires_at < NOW()
+    ORDER BY expires_at ASC
+    LIMIT 100
+  `);
+  return rows.map(dbRowToCard);
+}
+
+// Removes the reference to a card's personal photo after the R2 object has
+// been deleted (see deleteFromR2Url in index.js). The card row itself is
+// never touched beyond this one column.
+export async function clearCardImage(id) {
+  await pool.query(`UPDATE gift_cards SET custom_image_url = NULL WHERE id = $1`, [id]);
+}
+
 // ── Stats ────────────────────────────────────────────────
 export async function getStats() {
   const { rows } = await pool.query(`
@@ -382,6 +412,7 @@ function dbRowToCard(row) {
     expiresAt:              row.expires_at,
     refundStatus:           row.refund_status,
     createdAt:              row.created_at,
+    customImageUrl:         row.custom_image_url,
   };
 }
 

@@ -29,7 +29,21 @@ export const api = {
   design: (code) => request(`/api/designs/${encodeURIComponent(code)}`),
   submitDesign: (formData) => request('/api/designs', { method: 'POST', body: formData }),
 
-  createGift: (body) => request('/api/gift/create', json(body)),
+  // When body.image is a File (the "your own design/pic" option), this goes
+  // out as multipart/form-data instead of JSON — same as submitDesign above.
+  // Every other call site is unaffected: no `image` field, no File, same
+  // plain JSON POST as before.
+  createGift: (body) => {
+    if (body.image instanceof File) {
+      const fd = new FormData();
+      for (const [key, value] of Object.entries(body)) {
+        if (value === undefined || value === null) continue;
+        fd.append(key, value);
+      }
+      return request('/api/gift/create', { method: 'POST', body: fd });
+    }
+    return request('/api/gift/create', json(body));
+  },
   gift: (id) => request(`/api/gift/${encodeURIComponent(id)}`),
   giftByCode: (code) => request(`/api/gift/code/${encodeURIComponent(code)}`),
   redeem: (body) => request('/api/redeem', json(body)),
