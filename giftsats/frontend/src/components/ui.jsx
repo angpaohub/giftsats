@@ -86,6 +86,49 @@ export function Bolt({ size = 18, color = 'currentColor' }) {
   );
 }
 
+// Mobile header menu toggle — hamburger / close, swapped by Header.jsx
+// depending on whether the nav dropdown is open.
+export function MenuIcon({ size = 18, color = 'currentColor' }) {
+  return (
+    <span style={{ width: size, height: size, display: 'block', color, flex: '0 0 auto' }}>
+      <svg
+        viewBox="0 0 24 24"
+        width="100%"
+        height="100%"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
+        <line x1="4" y1="7" x2="20" y2="7" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+        <line x1="4" y1="17" x2="20" y2="17" />
+      </svg>
+    </span>
+  );
+}
+
+export function CloseIcon({ size = 18, color = 'currentColor' }) {
+  return (
+    <span style={{ width: size, height: size, display: 'block', color, flex: '0 0 auto' }}>
+      <svg
+        viewBox="0 0 24 24"
+        width="100%"
+        height="100%"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
+        <line x1="5" y1="5" x2="19" y2="19" />
+        <line x1="19" y1="5" x2="5" y2="19" />
+      </svg>
+    </span>
+  );
+}
+
 export function Label({ children, hint }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 9 }}>

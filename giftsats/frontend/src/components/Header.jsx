@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { T, Bolt } from './ui.jsx';
+import { T, Bolt, MenuIcon, CloseIcon } from './ui.jsx';
 
 const NAV = [
   { to: '/how-it-works', label: 'How it works' },
@@ -52,9 +53,44 @@ function Logo() {
 
 export default function Header() {
   const { pathname } = useLocation();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  // Close the dropdown on every navigation.
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  // While open: close on a tap/click outside the header, on Escape, or if
+  // the viewport grows past the mobile breakpoint (rotating a tablet,
+  // resizing a browser window) — the dropdown is mobile-only, so it
+  // shouldn't be left open behind the desktop nav links.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    const onResize = () => {
+      if (window.innerWidth > 720) setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('touchstart', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('touchstart', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
 
   return (
     <div
+      ref={rootRef}
       className="gs-no-print"
       style={{
         position: 'sticky',
@@ -91,9 +127,19 @@ export default function Header() {
         Create a gift
       </Link>
 
+      <button
+        type="button"
+        className="gs-menu-btn"
+        aria-label={open ? 'Close menu' : 'Open menu'}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <CloseIcon size={18} color={T.ink} /> : <MenuIcon size={18} color={T.ink} />}
+      </button>
+
       <div
-        className="gs-navlinks"
-        style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px clamp(12px, 2.2vw, 28px)' }}
+        className={`gs-navlinks${open ? ' gs-navlinks-open' : ''}`}
+        style={{ flexWrap: 'wrap', alignItems: 'center', gap: '10px clamp(12px, 2.2vw, 28px)' }}
       >
         {NAV.map((item) => {
           const active = pathname === item.to;

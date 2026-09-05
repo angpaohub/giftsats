@@ -85,43 +85,73 @@ p {
   border-radius: 4px;
 }
 
-/* Header: nav links sit before the CTA on desktop; below 720px the links
-   become a full-width scrolling row and the CTA moves up beside the logo. */
+/* Header: nav links sit before the CTA on desktop. Below 720px the links
+   move into a dropdown panel opened by a hamburger button that sits beside
+   the (unchanged) orange CTA; the CTA keeps its own desktop position and
+   styling in both layouts. */
 .gs-navlinks {
+  display: flex;
   order: 2;
   margin-left: auto;
 }
 .gs-cta {
   order: 3;
 }
+.gs-menu-btn {
+  display: none;
+}
 
 @media (max-width: 720px) {
-  .gs-navlinks {
-    order: 3;
-    margin-left: 0;
-    width: 100%;
-    flex-wrap: nowrap !important;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    gap: 18px !important;
-    padding: 2px 0 1px;
-    scrollbar-width: none;
-  }
-  .gs-navlinks::-webkit-scrollbar {
-    display: none;
-  }
-  .gs-navlinks > * {
-    white-space: nowrap;
-  }
   .gs-cta {
     order: 2;
+    margin-left: auto;
+  }
+
+  .gs-menu-btn {
+    order: 3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--surface-bright);
+    border: 1px solid var(--hairline);
+  }
+
+  /* Taken out of normal flow so it drops down over the page instead of
+     pushing the header (and everything below it) taller. */
+  .gs-navlinks {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-left: 0;
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 0 !important;
+    background: var(--surface-bright);
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+    box-shadow: 0 16px 32px -18px rgba(21, 18, 15, 0.28);
+    padding: 4px clamp(16px, 4vw, calc((100% - 1280px) / 2 + 48px));
+  }
+  .gs-navlinks.gs-navlinks-open {
+    display: flex;
+  }
+  .gs-navlinks > * {
+    padding: 15px 2px;
+    border-bottom: 1px solid var(--hairline);
   }
 }
 
 /* Admin dashboard nav tabs (Overview / Cards / Expiry / Marketplace / Node):
-   same treatment as .gs-navlinks above — on a narrow phone the row no
-   longer fits, so it becomes its own horizontally swipeable strip instead
-   of overflowing the whole page (which pushed the page wider than the
+   the same horizontally swipeable treatment .gs-navlinks used to get on a
+   narrow phone before it became a dropdown — on a narrow phone this row no
+   longer fits, so it becomes its own scrollable strip instead of
+   overflowing the whole page (which pushed the page wider than the
    viewport and exposed the cream body background to the right of the
    dark admin panel). */
 .gs-admin-navtabs {
