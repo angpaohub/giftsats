@@ -263,6 +263,39 @@ export async function releaseRedeemClaim(id) {
   );
 }
 
+// A card frozen at 'payout_unknown' has no automatic way out — see
+// markRedeemUnknown above, this is deliberate. It only moves again once a
+// human has checked LND's real payment history (Node tab → transactions) and
+// knows the true outcome. This is that manual decision, made a single
+// conditional UPDATE instead of a psql session against production:
+//   - outcome 'release'  → confirmed nothing left the node → back to 'minted',
+//     same as releaseRedeemClaim, so the same recipient can try again.
+//   - outcome 'confirm'  → confirmed the payment DID go out → 'redeemed',
+//     same terminal state finalizeRedeem would have produced, so the card can
+//     never be redeemed a second time on top of a payment that already sent.
+// Both branches only match a row that is still 'payout_unknown', so calling
+// this twice (or racing the admin UI) can't move an already-resolved card
+// again — the second call just updates zero rows.
+export async function resolveRedeemUnknown(id, outcome) {
+  if (outcome === 'release') {
+    const { rows } = await pool.query(
+      `UPDATE gift_cards SET status = 'minted', redeemed_to = NULL
+       WHERE id = $1 AND status = 'payout_unknown' RETURNING *`,
+      [id]
+    );
+    return rows[0] ? dbRowToCard(rows[0]) : null;
+  }
+  if (outcome === 'confirm') {
+    const { rows } = await pool.query(
+      `UPDATE gift_cards SET status = 'redeemed', redeemed_at = NOW()
+       WHERE id = $1 AND status = 'payout_unknown' RETURNING *`,
+      [id]
+    );
+    return rows[0] ? dbRowToCard(rows[0]) : null;
+  }
+  throw new Error(`resolveRedeemUnknown: unknown outcome "${outcome}"`);
+}
+
 // ── Mint (GS-005) ────────────────────────────────────────
 // No token/secret is generated here anymore (GS-004) — the redeem secret is
 // created once up front in createGiftCard, so minting is just the status flip.

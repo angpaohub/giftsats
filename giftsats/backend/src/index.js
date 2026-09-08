@@ -11,7 +11,7 @@ import {
   initDB, createGiftCard, getGiftCard, getGiftCardByCode, updateGiftCard, getStats,
   listAllCards, listExpiredUnredeemed,
   listDesigns, getDesignByCode, createDesign, incrementDesignUseCount, takedownDesign, restoreDesign,
-  claimForRedeem, finalizeRedeem, markRedeemUnknown, releaseRedeemClaim,
+  claimForRedeem, finalizeRedeem, markRedeemUnknown, releaseRedeemClaim, resolveRedeemUnknown,
   claimForMint,
   claimForRefund, finalizeRefund, markRefundUnknown, releaseRefundClaim, claimForForfeit,
   listCardsWithExpiredImages, clearCardImage,
@@ -137,11 +137,23 @@ const MAX_GIFT_SATS = 10_000_000;
 // refund address, or the address it was redeemed to.
 // 'redeeming' / 'payout_unknown' / 'refunding' / 'refund_unknown' are internal
 // in-flight or frozen-for-review states used to make redemption and refund
-// atomic (see claimForRedeem/claimForRefund in store.js). A public poller has
-// no use for that level of detail and no existing frontend code knows those
-// values — fold them into the nearest stable, already-handled public status.
+// atomic (see claimForRedeem/claimForRefund in store.js).
+//
+// These used to be folded into 'redeemed' / 'expired' here so the frontend
+// never had to know about them. That was wrong for 'redeeming' and
+// 'payout_unknown' specifically: a receiver (or sender, checking the share
+// link) who loads the card while a payout is still in flight, or frozen
+// pending manual review, was told "This gift card has already been
+// redeemed" — a claim of a completed, successful send that may turn out to
+// be false the moment the in-flight attempt fails, and that stays false
+// indefinitely for a frozen one. 'redeemed' now means only what it says:
+// the payout finished and the sats are gone. The two in-flight/frozen states
+// get their own public statuses instead so the UI can say something honest
+// ("still working on it" vs "needs a human") rather than the wrong kind of
+// "done".
 function publicStatus(card) {
-  if (card.status === 'redeeming' || card.status === 'payout_unknown') return 'redeemed';
+  if (card.status === 'redeeming') return 'processing';
+  if (card.status === 'payout_unknown') return 'on_hold';
   if (card.status === 'refunding' || card.status === 'refund_unknown') return 'expired';
   return card.status;
 }
@@ -325,6 +337,44 @@ app.get('/api/admin/cards', requireAdminKey, async (req, res) => {
     const cards = await listAllCards();
     res.json(cards);
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: resolve a redeem payout stuck in manual review ──
+// A card only reaches 'payout_unknown' when a payout attempt failed
+// ambiguously (LND timeout, HTTP error, or no preimage back — see
+// sendPayment's `.ambiguous` flag in lnd.js) and there is deliberately no
+// automatic way out of that state (see markRedeemUnknown/resolveRedeemUnknown
+// in store.js) — the whole point is that we don't know if the sats actually
+// left the node, so guessing is exactly what this state exists to prevent.
+// This endpoint turns the manual resolution into a button in the Cards tab
+// instead of a psql session: the admin checks the real outcome against LND's
+// payment history (Node tab / node-transactions, matched by amount and
+// rough timing — there's no stored payment_hash per payout yet, see GS-016)
+// and then tells the system which way it actually went.
+app.post('/api/admin/redeem/:id/resolve', requireAdminKey, async (req, res) => {
+  try {
+    const { outcome } = req.body; // 'release' (nothing sent — back to minted) | 'confirm' (it sent — close as redeemed)
+    if (outcome !== 'release' && outcome !== 'confirm') {
+      return res.status(400).json({ error: "outcome must be 'release' or 'confirm'" });
+    }
+    const card = await getGiftCard(req.params.id);
+    if (!card) return res.status(404).json({ error: 'Gift card not found' });
+    if (card.status !== 'payout_unknown') {
+      return res.status(409).json({ error: `Card is not awaiting review (current status: ${card.status})` });
+    }
+    const updated = await resolveRedeemUnknown(req.params.id, outcome);
+    if (!updated) {
+      // Status moved between the check above and the conditional UPDATE —
+      // extremely unlikely (nothing else can touch a payout_unknown row) but
+      // handled rather than assumed away.
+      return res.status(409).json({ error: 'Card status changed before this could be applied — reload and check again' });
+    }
+    console.log(`[admin] resolved payout_unknown for card ${req.params.id} → ${outcome === 'release' ? 'minted' : 'redeemed'}`);
+    res.json({ success: true, card: publicCard(updated) });
+  } catch (e) {
+    console.error('resolve redeem-unknown error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
