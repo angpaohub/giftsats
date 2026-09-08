@@ -159,6 +159,16 @@ export default function GiftLink() {
   const alreadyRedeemed = card.status === 'redeemed' && !done;
   const expired = card.status === 'expired' || ['refunded', 'forfeited'].includes(card.refundStatus);
   const pending = card.status === 'pending';
+  // 'processing' and 'on_hold' both mean this card's redemption did NOT
+  // finish as "redeemed" — the payout is either still in flight (someone,
+  // possibly in another tab/device, just tapped redeem and the request
+  // hasn't resolved yet) or failed ambiguously and is frozen for manual
+  // review. Neither one is "already redeemed" — that phrase is reserved for
+  // a payout that's actually done, since this card may still come back to
+  // "ready to redeem" once the in-flight attempt resolves (see the backend's
+  // publicStatus()).
+  const processing = card.status === 'processing';
+  const onHold = card.status === 'on_hold';
   const canRedeem = card.status === 'minted' && !expired;
   const from = (card.senderName || '').trim();
 
@@ -214,8 +224,16 @@ export default function GiftLink() {
               from={card.senderName}
               art={art}
               expiresAt={card.expiresAt}
-              statusLabel={done || alreadyRedeemed ? 'Redeemed' : 'Ready to redeem'}
-              statusColor={done || alreadyRedeemed ? T.mutedWarm : T.success}
+              statusLabel={
+                done || alreadyRedeemed
+                  ? 'Redeemed'
+                  : processing
+                    ? 'Processing…'
+                    : onHold
+                      ? 'On hold'
+                      : 'Ready to redeem'
+              }
+              statusColor={done || alreadyRedeemed ? T.mutedWarm : processing || onHold ? T.orangeDeep : T.success}
               onShowQr={() => setShowQr(true)}
             />
           </div>
@@ -240,6 +258,22 @@ export default function GiftLink() {
           )}
 
           {pending && <Notice>This card is waiting on its payment to settle. Check back in a moment.</Notice>}
+
+          {processing && (
+            <Notice>
+              A redemption is being sent right now — maybe from this device, maybe another tab or device that has
+              this link. This isn't finished yet. Refresh in a few seconds; if it fails, the card comes right back
+              and you can try again.
+            </Notice>
+          )}
+
+          {onHold && (
+            <Notice>
+              A redemption attempt on this card needs a person to check before it can move again — it is not
+              confirmed as sent, and it hasn't been returned to the card either. Nothing more to do on your end
+              right now; if you were expecting this and it's taking a while, contact support.
+            </Notice>
+          )}
 
           {canRedeem && !done && (
             <>

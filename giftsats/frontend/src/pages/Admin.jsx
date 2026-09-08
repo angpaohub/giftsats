@@ -85,7 +85,40 @@ function expiryInfo(card) {
 }
 
 // ── Cards table with expiry column ──────────────────────
-function CardsTable({ rows, allCards }) {
+// adminFetch/onResolved are only used by the ACTIONS column, which only ever
+// renders anything for a 'payout_unknown' row — every other row's cells are
+// unaffected by these props.
+function CardsTable({ rows, allCards, adminFetch, onResolved }) {
+  // Tracks which card ids currently have a resolve request in flight, so the
+  // buttons on that one row disable themselves without a table-wide loading
+  // state (an admin working through several frozen cards shouldn't have the
+  // whole table lock up on every click).
+  const [resolving, setResolving] = useState(() => new Set());
+
+  async function resolve(card, outcome) {
+    const label = outcome === 'release'
+      ? 'Confirm nothing left the node, and hand this card back to "minted" so it can be redeemed again?'
+      : 'Confirm the payout DID go out, and close this card out as "redeemed" so it can never be redeemed again?';
+    if (!confirm(`${label}\n\nCard ${card.id}\n${card.amountSats?.toLocaleString()} sats\nCheck the Node tab's transactions against this card's redeemed-to address/amount before confirming — this cannot be undone from here.`)) {
+      return;
+    }
+    setResolving(prev => new Set(prev).add(card.id));
+    try {
+      const res = await adminFetch(`/api/admin/redeem/${card.id}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcome }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Resolve failed');
+      onResolved?.();
+    } catch (e) {
+      alert(`Could not resolve card ${card.id}: ${e.message}`);
+    } finally {
+      setResolving(prev => { const next = new Set(prev); next.delete(card.id); return next; });
+    }
+  }
+
   if (!rows || rows.length === 0) {
     return (
       <div style={{ fontFamily: mono, fontSize: 12, color: '#333', padding: '40px', textAlign: 'center', border: '1px dashed #1a1a1a', borderRadius: 10 }}>
@@ -99,7 +132,7 @@ function CardsTable({ rows, allCards }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: mono, fontSize: 11 }}>
         <thead>
           <tr>
-            {['ID', 'STATUS', 'AMOUNT', 'DESIGN', 'EXPIRES', 'REFUND ADDR', 'REDEEMED TO', 'CREATED'].map(col => (
+            {['ID', 'STATUS', 'AMOUNT', 'DESIGN', 'EXPIRES', 'REFUND ADDR', 'REDEEMED TO', 'CREATED', 'ACTIONS'].map(col => (
               <th key={col} style={{ textAlign: 'left', padding: '10px 14px', color: '#444', letterSpacing: 2, fontSize: 10, borderBottom: '1px solid #1a1a1a', whiteSpace: 'nowrap' }}>
                 {col}
               </th>
@@ -194,6 +227,45 @@ function CardsTable({ rows, allCards }) {
                 {/* CREATED */}
                 <td style={{ padding: '12px 14px', color: '#333', whiteSpace: 'nowrap' }}>
                   {card.createdAt ? new Date(card.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                </td>
+
+                {/* ACTIONS — only a payout_unknown row has anything to do here.
+                    Every other status either isn't stuck (nothing to resolve)
+                    or has its own automatic path back (redeeming releases or
+                    freezes on its own once the in-flight request finishes). */}
+                <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
+                  {card.status === 'payout_unknown' ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        disabled={resolving.has(card.id)}
+                        onClick={() => resolve(card, 'release')}
+                        title="Confirmed against LND: nothing left the node — hand the card back to minted"
+                        style={{
+                          padding: '5px 10px', background: 'transparent', border: '1px solid #39ff1444',
+                          borderRadius: 5, color: '#39ff14', fontFamily: mono, fontSize: 9.5, letterSpacing: 0.5,
+                          cursor: resolving.has(card.id) ? 'default' : 'pointer', opacity: resolving.has(card.id) ? 0.5 : 1,
+                        }}
+                      >
+                        RELEASE→MINTED
+                      </button>
+                      <button
+                        type="button"
+                        disabled={resolving.has(card.id)}
+                        onClick={() => resolve(card, 'confirm')}
+                        title="Confirmed against LND: the payment did go out — close the card out as redeemed"
+                        style={{
+                          padding: '5px 10px', background: 'transparent', border: '1px solid #3b9eff44',
+                          borderRadius: 5, color: '#3b9eff', fontFamily: mono, fontSize: 9.5, letterSpacing: 0.5,
+                          cursor: resolving.has(card.id) ? 'default' : 'pointer', opacity: resolving.has(card.id) ? 0.5 : 1,
+                        }}
+                      >
+                        CONFIRM→REDEEMED
+                      </button>
+                    </div>
+                  ) : (
+                    <span style={{ color: '#222' }}>—</span>
+                  )}
                 </td>
               </tr>
             );
@@ -544,7 +616,7 @@ function AdminDashboard({ adminKey, onAuthError }) {
               {loading ? (
                 <div style={{ padding: 40, textAlign: 'center', fontFamily: mono, fontSize: 11, color: '#333' }}>LOADING...</div>
               ) : (
-                <CardsTable rows={filteredCards} allCards={cards} />
+                <CardsTable rows={filteredCards} allCards={cards} adminFetch={adminFetch} onResolved={fetchData} />
               )}
             </div>
           </>
