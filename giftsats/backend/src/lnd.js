@@ -125,23 +125,76 @@ export async function getOwnPubkey() {
   return ownPubkeyCache;
 }
 
+// Identify ourselves honestly on the two calls below. Some recipient
+// providers (seen with a Binance Global Lightning address specifically —
+// same amount worked fine sent from Wallet of Satoshi, so it isn't an
+// amount/limit rejection) appear to reject requests from cloud/datacenter
+// IPs with no identifying User-Agent, which previously surfaced to us as a
+// generic "invoice ใช้ไม่ได้" once the missing invoice reached LND. Do not
+// change this to impersonate another wallet's UA to dodge that — that's
+// both dishonest and a likely ToS problem with the recipient; identifying
+// ourselves plainly is the legitimate fix, and if a provider still blocks
+// us after this, the logging below will say so explicitly instead of
+// failing silently downstream.
+const LNURL_FETCH_HEADERS = {
+  'User-Agent': 'GiftSats/1.0 (+https://giftsats.org)',
+  Accept: 'application/json',
+};
+
 export async function payLightningAddress(lightningAddress, amountSats) {
   const [user, domain] = lightningAddress.split('@');
   if (!user || !domain) throw new Error('Invalid Lightning address');
   // No `agent` here on purpose — these two calls go to a server we don't
   // control (the recipient's wallet provider), so they must use normal,
   // verified HTTPS, not the LND-only insecure agent above.
-  const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`);
-  if (!lnurlRes.ok) throw new Error('Could not resolve Lightning address');
-  const lnurlData = await lnurlRes.json();
+  const lnurlRes = await fetch(`https://${domain}/.well-known/lnurlp/${user}`, {
+    headers: LNURL_FETCH_HEADERS,
+  });
+  if (!lnurlRes.ok) throw new Error(`Could not resolve Lightning address (HTTP ${lnurlRes.status})`);
+  const lnurlData = await parseLnurlJson(lnurlRes, 'resolving Lightning address');
+  if (lnurlData.status === 'ERROR') {
+    throw new Error(`Lightning address rejected the request: ${lnurlData.reason || '(no reason given)'}`);
+  }
+  if (!lnurlData.callback) {
+    throw new Error('Lightning address did not return a payment callback');
+  }
+
   const amountMsats = amountSats * 1000;
-  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`);
-  if (!invoiceRes.ok) throw new Error('Could not get invoice');
-  const { pr } = await invoiceRes.json();
+  const invoiceRes = await fetch(`${lnurlData.callback}?amount=${amountMsats}`, {
+    headers: LNURL_FETCH_HEADERS,
+  });
+  if (!invoiceRes.ok) throw new Error(`Could not get invoice (HTTP ${invoiceRes.status})`);
+  const invoiceData = await parseLnurlJson(invoiceRes, 'requesting invoice');
+  if (invoiceData.status === 'ERROR') {
+    throw new Error(`Lightning address rejected the amount: ${invoiceData.reason || '(no reason given)'}`);
+  }
+  if (!invoiceData.pr) {
+    // Nothing usable came back — this is a clean failure (we never called
+    // LND, so nothing left the node). Everything above and this line throws
+    // a plain Error on purpose, matching sendPayment's contract below: only
+    // failures from sendPayment onward are `.ambiguous`.
+    console.error('[payLightningAddress] callback response had no `pr`:', JSON.stringify(invoiceData));
+    throw new Error('Lightning address did not return a usable invoice');
+  }
 
   // The invoice we just fetched is for `amountSats` because that's the amount
   // we asked the LNURL callback for, so it doubles as the fee-limit basis.
-  return sendPayment(pr, amountSats);
+  return sendPayment(invoiceData.pr, amountSats);
+}
+
+// Recipient LNURL servers are outside our control and occasionally answer
+// with something that isn't JSON at all (an HTML error/challenge page from
+// a WAF, for instance) — .json() alone would throw a generic "unexpected
+// token" error that hides what actually came back. Read the body as text
+// first so a parse failure can log what we actually received.
+async function parseLnurlJson(res, whileDoing) {
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    console.error(`[payLightningAddress] non-JSON response while ${whileDoing}:`, raw.slice(0, 500));
+    throw new Error(`Recipient's Lightning address server returned an invalid response while ${whileDoing}`);
+  }
 }
 
 // Pay a BOLT11 invoice supplied by someone else.
