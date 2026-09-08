@@ -1,0 +1,344 @@
+From 43da6285156eaa60ebee632c26ab3ecefd58f808 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 8 Sep 2026 14:32:04 +0000
+Subject: [PATCH] Fix false "already redeemed" status and add admin resolve for
+ stuck payouts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+publicStatus() was collapsing both in-flight redemptions (redeeming) and
+frozen ambiguous-failure redemptions (payout_unknown) into the same public
+status as a completed redemption. A card whose payout genuinely failed or
+was still in flight showed "This gift card has already been redeemed" on
+the GiftLink page, even though the card had not actually been redeemed and
+in the payout_unknown case may never resolve without human review.
+
+- backend: split public status into distinct processing / on_hold values,
+  leaving the raw internal status machine and the atomic claim path in
+  /api/redeem completely untouched (no change to double-spend protection)
+- backend: add resolveRedeemUnknown() + POST /api/admin/redeem/:id/resolve
+  so a payout_unknown card can be released back to minted or confirmed as
+  redeemed from the admin UI, instead of requiring direct DB access. Both
+  outcomes use a conditional UPDATE ... WHERE status = 'payout_unknown' so
+  a card can only be resolved once.
+- frontend: GiftLink.jsx shows honest, distinct messaging for processing
+  and on_hold instead of the redeemed message
+- frontend: Admin.jsx adds RELEASE→MINTED / CONFIRM→REDEEMED buttons on
+  payout_unknown rows in the cards table
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01KvAh7hVc92EQaPsQ7zKfuN
+---
+ giftsats/backend/src/index.js            | 60 ++++++++++++++++--
+ giftsats/backend/src/store.js            | 33 ++++++++++
+ giftsats/frontend/src/pages/Admin.jsx    | 78 +++++++++++++++++++++++-
+ giftsats/frontend/src/pages/GiftLink.jsx | 38 +++++++++++-
+ 4 files changed, 199 insertions(+), 10 deletions(-)
+
+diff --git a/giftsats/backend/src/index.js b/giftsats/backend/src/index.js
+index 240417d..de304a6 100644
+--- a/giftsats/backend/src/index.js
++++ b/giftsats/backend/src/index.js
+@@ -11,7 +11,7 @@ import {
+   initDB, createGiftCard, getGiftCard, getGiftCardByCode, updateGiftCard, getStats,
+   listAllCards, listExpiredUnredeemed,
+   listDesigns, getDesignByCode, createDesign, incrementDesignUseCount, takedownDesign, restoreDesign,
+-  claimForRedeem, finalizeRedeem, markRedeemUnknown, releaseRedeemClaim,
++  claimForRedeem, finalizeRedeem, markRedeemUnknown, releaseRedeemClaim, resolveRedeemUnknown,
+   claimForMint,
+   claimForRefund, finalizeRefund, markRefundUnknown, releaseRefundClaim, claimForForfeit,
+   listCardsWithExpiredImages, clearCardImage,
+@@ -137,11 +137,23 @@ const MAX_GIFT_SATS = 10_000_000;
+ // refund address, or the address it was redeemed to.
+ // 'redeeming' / 'payout_unknown' / 'refunding' / 'refund_unknown' are internal
+ // in-flight or frozen-for-review states used to make redemption and refund
+-// atomic (see claimForRedeem/claimForRefund in store.js). A public poller has
+-// no use for that level of detail and no existing frontend code knows those
+-// values — fold them into the nearest stable, already-handled public status.
++// atomic (see claimForRedeem/claimForRefund in store.js).
++//
++// These used to be folded into 'redeemed' / 'expired' here so the frontend
++// never had to know about them. That was wrong for 'redeeming' and
++// 'payout_unknown' specifically: a receiver (or sender, checking the share
++// link) who loads the card while a payout is still in flight, or frozen
++// pending manual review, was told "This gift card has already been
++// redeemed" — a claim of a completed, successful send that may turn out to
++// be false the moment the in-flight attempt fails, and that stays false
++// indefinitely for a frozen one. 'redeemed' now means only what it says:
++// the payout finished and the sats are gone. The two in-flight/frozen states
++// get their own public statuses instead so the UI can say something honest
++// ("still working on it" vs "needs a human") rather than the wrong kind of
++// "done".
+ function publicStatus(card) {
+-  if (card.status === 'redeeming' || card.status === 'payout_unknown') return 'redeemed';
++  if (card.status === 'redeeming') return 'processing';
++  if (card.status === 'payout_unknown') return 'on_hold';
+   if (card.status === 'refunding' || card.status === 'refund_unknown') return 'expired';
+   return card.status;
+ }
+@@ -330,6 +342,44 @@ app.get('/api/admin/cards', requireAdminKey, async (req, res) => {
+   }
+ });
+ 
++// ── Admin: resolve a redeem payout stuck in manual review ──
++// A card only reaches 'payout_unknown' when a payout attempt failed
++// ambiguously (LND timeout, HTTP error, or no preimage back — see
++// sendPayment's `.ambiguous` flag in lnd.js) and there is deliberately no
++// automatic way out of that state (see markRedeemUnknown/resolveRedeemUnknown
++// in store.js) — the whole point is that we don't know if the sats actually
++// left the node, so guessing is exactly what this state exists to prevent.
++// This endpoint turns the manual resolution into a button in the Cards tab
++// instead of a psql session: the admin checks the real outcome against LND's
++// payment history (Node tab / node-transactions, matched by amount and
++// rough timing — there's no stored payment_hash per payout yet, see GS-016)
++// and then tells the system which way it actually went.
++app.post('/api/admin/redeem/:id/resolve', requireAdminKey, async (req, res) => {
++  try {
++    const { outcome } = req.body; // 'release' (nothing sent — back to minted) | 'confirm' (it sent — close as redeemed)
++    if (outcome !== 'release' && outcome !== 'confirm') {
++      return res.status(400).json({ error: "outcome must be 'release' or 'confirm'" });
++    }
++    const card = await getGiftCard(req.params.id);
++    if (!card) return res.status(404).json({ error: 'Gift card not found' });
++    if (card.status !== 'payout_unknown') {
++      return res.status(409).json({ error: `Card is not awaiting review (current status: ${card.status})` });
++    }
++    const updated = await resolveRedeemUnknown(req.params.id, outcome);
++    if (!updated) {
++      // Status moved between the check above and the conditional UPDATE —
++      // extremely unlikely (nothing else can touch a payout_unknown row) but
++      // handled rather than assumed away.
++      return res.status(409).json({ error: 'Card status changed before this could be applied — reload and check again' });
++    }
++    console.log(`[admin] resolved payout_unknown for card ${req.params.id} → ${outcome === 'release' ? 'minted' : 'redeemed'}`);
++    res.json({ success: true, card: publicCard(updated) });
++  } catch (e) {
++    console.error('resolve redeem-unknown error:', e.message);
++    res.status(500).json({ error: e.message });
++  }
++});
++
+ // ── Admin: list ALL designs (incl. inactive) ────────────
+ app.get('/api/admin/designs', requireAdminKey, async (req, res) => {
+   try {
+diff --git a/giftsats/backend/src/store.js b/giftsats/backend/src/store.js
+index ade37ad..8693e81 100644
+--- a/giftsats/backend/src/store.js
++++ b/giftsats/backend/src/store.js
+@@ -271,6 +271,39 @@ export async function releaseRedeemClaim(id) {
+   );
+ }
+ 
++// A card frozen at 'payout_unknown' has no automatic way out — see
++// markRedeemUnknown above, this is deliberate. It only moves again once a
++// human has checked LND's real payment history (Node tab → transactions) and
++// knows the true outcome. This is that manual decision, made a single
++// conditional UPDATE instead of a psql session against production:
++//   - outcome 'release'  → confirmed nothing left the node → back to 'minted',
++//     same as releaseRedeemClaim, so the same recipient can try again.
++//   - outcome 'confirm'  → confirmed the payment DID go out → 'redeemed',
++//     same terminal state finalizeRedeem would have produced, so the card can
++//     never be redeemed a second time on top of a payment that already sent.
++// Both branches only match a row that is still 'payout_unknown', so calling
++// this twice (or racing the admin UI) can't move an already-resolved card
++// again — the second call just updates zero rows.
++export async function resolveRedeemUnknown(id, outcome) {
++  if (outcome === 'release') {
++    const { rows } = await pool.query(
++      `UPDATE gift_cards SET status = 'minted', redeemed_to = NULL
++       WHERE id = $1 AND status = 'payout_unknown' RETURNING *`,
++      [id]
++    );
++    return rows[0] ? dbRowToCard(rows[0]) : null;
++  }
++  if (outcome === 'confirm') {
++    const { rows } = await pool.query(
++      `UPDATE gift_cards SET status = 'redeemed', redeemed_at = NOW()
++       WHERE id = $1 AND status = 'payout_unknown' RETURNING *`,
++      [id]
++    );
++    return rows[0] ? dbRowToCard(rows[0]) : null;
++  }
++  throw new Error(`resolveRedeemUnknown: unknown outcome "${outcome}"`);
++}
++
+ // ── Mint (GS-005) ────────────────────────────────────────
+ // No token/secret is generated here anymore (GS-004) — the redeem secret is
+ // created once up front in createGiftCard, so minting is just the status flip.
+diff --git a/giftsats/frontend/src/pages/Admin.jsx b/giftsats/frontend/src/pages/Admin.jsx
+index 8a2d218..4a2fa8a 100644
+--- a/giftsats/frontend/src/pages/Admin.jsx
++++ b/giftsats/frontend/src/pages/Admin.jsx
+@@ -85,7 +85,40 @@ function expiryInfo(card) {
+ }
+ 
+ // ── Cards table with expiry column ──────────────────────
+-function CardsTable({ rows, allCards }) {
++// adminFetch/onResolved are only used by the ACTIONS column, which only ever
++// renders anything for a 'payout_unknown' row — every other row's cells are
++// unaffected by these props.
++function CardsTable({ rows, allCards, adminFetch, onResolved }) {
++  // Tracks which card ids currently have a resolve request in flight, so the
++  // buttons on that one row disable themselves without a table-wide loading
++  // state (an admin working through several frozen cards shouldn't have the
++  // whole table lock up on every click).
++  const [resolving, setResolving] = useState(() => new Set());
++
++  async function resolve(card, outcome) {
++    const label = outcome === 'release'
++      ? 'Confirm nothing left the node, and hand this card back to "minted" so it can be redeemed again?'
++      : 'Confirm the payout DID go out, and close this card out as "redeemed" so it can never be redeemed again?';
++    if (!confirm(`${label}\n\nCard ${card.id}\n${card.amountSats?.toLocaleString()} sats\nCheck the Node tab's transactions against this card's redeemed-to address/amount before confirming — this cannot be undone from here.`)) {
++      return;
++    }
++    setResolving(prev => new Set(prev).add(card.id));
++    try {
++      const res = await adminFetch(`/api/admin/redeem/${card.id}/resolve`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ outcome }),
++      });
++      const data = await res.json().catch(() => ({}));
++      if (!res.ok) throw new Error(data.error || 'Resolve failed');
++      onResolved?.();
++    } catch (e) {
++      alert(`Could not resolve card ${card.id}: ${e.message}`);
++    } finally {
++      setResolving(prev => { const next = new Set(prev); next.delete(card.id); return next; });
++    }
++  }
++
+   if (!rows || rows.length === 0) {
+     return (
+       <div style={{ fontFamily: mono, fontSize: 12, color: '#333', padding: '40px', textAlign: 'center', border: '1px dashed #1a1a1a', borderRadius: 10 }}>
+@@ -99,7 +132,7 @@ function CardsTable({ rows, allCards }) {
+       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: mono, fontSize: 11 }}>
+         <thead>
+           <tr>
+-            {['ID', 'STATUS', 'AMOUNT', 'DESIGN', 'EXPIRES', 'REFUND ADDR', 'REDEEMED TO', 'CREATED'].map(col => (
++            {['ID', 'STATUS', 'AMOUNT', 'DESIGN', 'EXPIRES', 'REFUND ADDR', 'REDEEMED TO', 'CREATED', 'ACTIONS'].map(col => (
+               <th key={col} style={{ textAlign: 'left', padding: '10px 14px', color: '#444', letterSpacing: 2, fontSize: 10, borderBottom: '1px solid #1a1a1a', whiteSpace: 'nowrap' }}>
+                 {col}
+               </th>
+@@ -195,6 +228,45 @@ function CardsTable({ rows, allCards }) {
+                 <td style={{ padding: '12px 14px', color: '#333', whiteSpace: 'nowrap' }}>
+                   {card.createdAt ? new Date(card.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                 </td>
++
++                {/* ACTIONS — only a payout_unknown row has anything to do here.
++                    Every other status either isn't stuck (nothing to resolve)
++                    or has its own automatic path back (redeeming releases or
++                    freezes on its own once the in-flight request finishes). */}
++                <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
++                  {card.status === 'payout_unknown' ? (
++                    <div style={{ display: 'flex', gap: 6 }}>
++                      <button
++                        type="button"
++                        disabled={resolving.has(card.id)}
++                        onClick={() => resolve(card, 'release')}
++                        title="Confirmed against LND: nothing left the node — hand the card back to minted"
++                        style={{
++                          padding: '5px 10px', background: 'transparent', border: '1px solid #39ff1444',
++                          borderRadius: 5, color: '#39ff14', fontFamily: mono, fontSize: 9.5, letterSpacing: 0.5,
++                          cursor: resolving.has(card.id) ? 'default' : 'pointer', opacity: resolving.has(card.id) ? 0.5 : 1,
++                        }}
++                      >
++                        RELEASE→MINTED
++                      </button>
++                      <button
++                        type="button"
++                        disabled={resolving.has(card.id)}
++                        onClick={() => resolve(card, 'confirm')}
++                        title="Confirmed against LND: the payment did go out — close the card out as redeemed"
++                        style={{
++                          padding: '5px 10px', background: 'transparent', border: '1px solid #3b9eff44',
++                          borderRadius: 5, color: '#3b9eff', fontFamily: mono, fontSize: 9.5, letterSpacing: 0.5,
++                          cursor: resolving.has(card.id) ? 'default' : 'pointer', opacity: resolving.has(card.id) ? 0.5 : 1,
++                        }}
++                      >
++                        CONFIRM→REDEEMED
++                      </button>
++                    </div>
++                  ) : (
++                    <span style={{ color: '#222' }}>—</span>
++                  )}
++                </td>
+               </tr>
+             );
+           })}
+@@ -544,7 +616,7 @@ function AdminDashboard({ adminKey, onAuthError }) {
+               {loading ? (
+                 <div style={{ padding: 40, textAlign: 'center', fontFamily: mono, fontSize: 11, color: '#333' }}>LOADING...</div>
+               ) : (
+-                <CardsTable rows={filteredCards} allCards={cards} />
++                <CardsTable rows={filteredCards} allCards={cards} adminFetch={adminFetch} onResolved={fetchData} />
+               )}
+             </div>
+           </>
+diff --git a/giftsats/frontend/src/pages/GiftLink.jsx b/giftsats/frontend/src/pages/GiftLink.jsx
+index 3e2791c..58812c4 100644
+--- a/giftsats/frontend/src/pages/GiftLink.jsx
++++ b/giftsats/frontend/src/pages/GiftLink.jsx
+@@ -159,6 +159,16 @@ export default function GiftLink() {
+   const alreadyRedeemed = card.status === 'redeemed' && !done;
+   const expired = card.status === 'expired' || ['refunded', 'forfeited'].includes(card.refundStatus);
+   const pending = card.status === 'pending';
++  // 'processing' and 'on_hold' both mean this card's redemption did NOT
++  // finish as "redeemed" — the payout is either still in flight (someone,
++  // possibly in another tab/device, just tapped redeem and the request
++  // hasn't resolved yet) or failed ambiguously and is frozen for manual
++  // review. Neither one is "already redeemed" — that phrase is reserved for
++  // a payout that's actually done, since this card may still come back to
++  // "ready to redeem" once the in-flight attempt resolves (see the backend's
++  // publicStatus()).
++  const processing = card.status === 'processing';
++  const onHold = card.status === 'on_hold';
+   const canRedeem = card.status === 'minted' && !expired;
+   const from = (card.senderName || '').trim();
+ 
+@@ -214,8 +224,16 @@ export default function GiftLink() {
+               from={card.senderName}
+               art={art}
+               expiresAt={card.expiresAt}
+-              statusLabel={done || alreadyRedeemed ? 'Redeemed' : 'Ready to redeem'}
+-              statusColor={done || alreadyRedeemed ? T.mutedWarm : T.success}
++              statusLabel={
++                done || alreadyRedeemed
++                  ? 'Redeemed'
++                  : processing
++                    ? 'Processing…'
++                    : onHold
++                      ? 'On hold'
++                      : 'Ready to redeem'
++              }
++              statusColor={done || alreadyRedeemed ? T.mutedWarm : processing || onHold ? T.orangeDeep : T.success}
+               onShowQr={() => setShowQr(true)}
+             />
+           </div>
+@@ -241,6 +259,22 @@ export default function GiftLink() {
+ 
+           {pending && <Notice>This card is waiting on its payment to settle. Check back in a moment.</Notice>}
+ 
++          {processing && (
++            <Notice>
++              A redemption is being sent right now — maybe from this device, maybe another tab or device that has
++              this link. This isn't finished yet. Refresh in a few seconds; if it fails, the card comes right back
++              and you can try again.
++            </Notice>
++          )}
++
++          {onHold && (
++            <Notice>
++              A redemption attempt on this card needs a person to check before it can move again — it is not
++              confirmed as sent, and it hasn't been returned to the card either. Nothing more to do on your end
++              right now; if you were expecting this and it's taking a while, contact support.
++            </Notice>
++          )}
++
+           {canRedeem && !done && (
+             <>
+               <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+-- 
+2.43.0
+
