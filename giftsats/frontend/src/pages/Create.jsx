@@ -20,7 +20,7 @@ import { fmt, isLightningAddress } from '../lib/format.js';
 const PRESETS = [1000, 2100, 5000, 10000, 21000];
 const MIN_SATS = 1000;
 const SERVICE_FEE_PERCENT = 2;
-const NETWORK_FEE_SATS = 7;
+const NETWORK_FEE_SATS = 5;
 const CUSTOM_IMAGE_FEE_SATS = 2500;
 const CUSTOM_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const REDEEM_DAYS = 30;
